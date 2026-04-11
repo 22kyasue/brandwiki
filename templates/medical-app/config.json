@@ -1,0 +1,77 @@
+{
+  "name": "medical-app",
+  "description": "Template for medical / healthcare applications. Emphasizes medical logic documentation, safety constraints, and Japanese pharmaceutical standards.",
+  "categories": [
+    {
+      "id": "01-brand",
+      "title": "ブランド",
+      "description": "プロダクトのミッション、トーン、世界観、キャラクター設定"
+    },
+    {
+      "id": "02-product",
+      "title": "プロダクト",
+      "description": "機能一覧、ユーザー導線、ペルソナ、差別化要因"
+    },
+    {
+      "id": "03-medical",
+      "title": "医療ロジック",
+      "description": "症状トリアージ、疾患推定、OTC分類、安全性制約（読み取り専用の知識記録）"
+    },
+    {
+      "id": "04-design",
+      "title": "デザインシステム",
+      "description": "カラー、タイポグラフィ、コンポーネント、画面テンプレート"
+    },
+    {
+      "id": "05-architecture",
+      "title": "アーキテクチャ",
+      "description": "バックエンド、フロントエンド、データモデル、外部連携"
+    },
+    {
+      "id": "06-content",
+      "title": "コンテンツ",
+      "description": "用語統一、エラー文言、通知テンプレート、法務コピー"
+    },
+    {
+      "id": "07-operations",
+      "title": "運用",
+      "description": "デプロイ、監視、リリースプロセス、バージョン管理"
+    },
+    {
+      "id": "08-history",
+      "title": "開発史",
+      "description": "フェーズ別経緯、重要決定ログ、変更履歴"
+    },
+    {
+      "id": "09-market",
+      "title": "マーケット",
+      "description": "ターゲット層、業界知識、競合、ユーザーの声"
+    }
+  ],
+  "ingestPaths": [
+    { "from": "CLAUDE.md", "to": "raw/notes/" },
+    { "from": "README.md", "to": "raw/notes/" },
+    { "from": "*.md", "to": "raw/notes/" },
+    { "from": "notes/**/*.md", "to": "raw/notes/" },
+    { "from": "docs/**/*.md", "to": "raw/notes/" },
+    { "from": "agentschat/**/*.md", "to": "raw/meetings/" },
+    { "from": "backend/prisma/schema.prisma", "to": "raw/code-snapshots/" },
+    { "from": "backend/src/services/*.ts", "to": "raw/code-snapshots/services/" },
+    { "from": "backend/src/routes/*.ts", "to": "raw/code-snapshots/routes/" },
+    { "from": "backend/src/controllers/*.ts", "to": "raw/code-snapshots/controllers/" },
+    { "from": "backend/src/config/*.ts", "to": "raw/code-snapshots/config/" },
+    { "from": "backend/package.json", "to": "raw/code-snapshots/" },
+    { "from": "frontend/package.json", "to": "raw/code-snapshots/" },
+    { "from": "frontend/app.json", "to": "raw/code-snapshots/" },
+    { "from": "frontend/src/constants/*.ts", "to": "raw/code-snapshots/constants/" },
+    { "from": "frontend/src/i18n/locales/ja/*.json", "to": "raw/references/i18n/" },
+    { "from": "frontend/src/navigation/*.tsx", "to": "raw/code-snapshots/navigation/" },
+    { "from": "frontend/src/stores/*.tsx", "to": "raw/code-snapshots/stores/" },
+    { "from": "frontend/src/screens/**/*.tsx", "to": "raw/code-snapshots/screens/", "maxSize": 80000 },
+    { "from": ".github/workflows/*.yml", "to": "raw/code-snapshots/ci/" }
+  ],
+  "watch": {
+    "debounceMs": 20000,
+    "autoCompile": false
+  }
+}

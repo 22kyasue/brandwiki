@@ -1,0 +1,46 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+export interface IngestRule {
+  from: string;
+  to: string;
+  maxSize?: number;
+}
+
+export interface BrandwikiConfig {
+  projectName: string;
+  language: 'ja' | 'en';
+  template: string;
+  provider?: 'claude-cli' | 'api';
+  categories: Array<{ id: string; title: string; description: string }>;
+  model: {
+    compile: string;
+    lint: string;
+    query: string;
+  };
+  sources: Array<{ path: string; type: string; glob?: string }>;
+  ingestPaths?: IngestRule[];
+  watch?: {
+    debounceMs?: number;
+    autoCompile?: boolean;
+  };
+}
+
+export function findProjectRoot(startDir: string = process.cwd()): string {
+  let dir = resolve(startDir);
+  while (dir !== resolve(dir, '..')) {
+    if (existsSync(join(dir, '.brandwiki', 'config.json'))) return dir;
+    dir = resolve(dir, '..');
+  }
+  throw new Error('No .brandwiki/config.json found. Run `brandwiki init` first.');
+}
+
+export function loadConfig(projectRoot: string): BrandwikiConfig {
+  const configPath = join(projectRoot, '.brandwiki', 'config.json');
+  const raw = readFileSync(configPath, 'utf-8');
+  return JSON.parse(raw) as BrandwikiConfig;
+}
+
+export function brandwikiDir(projectRoot: string): string {
+  return join(projectRoot, '.brandwiki');
+}

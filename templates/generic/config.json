@@ -1,0 +1,12 @@
+{
+  "name": "generic",
+  "description": "Generic project template with broad categories.",
+  "categories": [
+    { "id": "01-overview", "title": "Overview", "description": "Project mission, goals, scope" },
+    { "id": "02-product", "title": "Product", "description": "Features, user flows, personas" },
+    { "id": "03-architecture", "title": "Architecture", "description": "Technical design and system structure" },
+    { "id": "04-design", "title": "Design", "description": "Visual and UX design system" },
+    { "id": "05-operations", "title": "Operations", "description": "Deployment, monitoring, release process" },
+    { "id": "06-history", "title": "History", "description": "Decisions, milestones, changelog" }
+  ]
+}
