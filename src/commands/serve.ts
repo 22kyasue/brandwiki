@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import fg from 'fast-glob';
 import matter from 'gray-matter';
 import pc from 'picocolors';
@@ -180,6 +181,38 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     return articles.map((a) => ({ category: a.category, slug: a.slug, title: a.title }));
   }
 
+  function renderContextNav(articles: Article[], currentCat?: string, section = true): string {
+    const byCategory: Record<string, number> = {};
+    for (const a of articles) byCategory[a.category] = (byCategory[a.category] ?? 0) + 1;
+    const catItems = config.categories
+      .filter((c) => (byCategory[c.id] ?? 0) > 0)
+      .map((c) => {
+        const count = byCategory[c.id] ?? 0;
+        const active = c.id === currentCat;
+        const color = categoryColor(c.id);
+        return `<li><a href="/category/${c.id}" class="${active ? 'active' : ''}" style="--cat-color: ${color}">
+          ${escapeHtml(c.title)}<span class="bw-context-nav-count">${count}</span>
+        </a></li>`;
+      })
+      .join('');
+
+    const navItems = `<li><a href="/">🏠 Main Page</a></li>
+      <li><a href="/all">📄 All Articles</a></li>
+      <li><a href="/special/recent-changes">🕒 Recent</a></li>
+      <li><a href="/random">🎲 Random</a></li>`;
+
+    const sectionOpen = section ? '<div class="bw-context-nav-section">' : '';
+    const sectionClose = section ? '</div>' : '';
+    return `${sectionOpen}
+      <div class="bw-context-nav-header">Navigation</div>
+      <ul>${navItems}</ul>
+    ${sectionClose}
+    ${sectionOpen}
+      <div class="bw-context-nav-header">Categories</div>
+      <ul>${catItems}</ul>
+    ${sectionClose}`;
+  }
+
   function buildBacklinkGraph(articles: Article[]): { nodes: any[]; links: any[] } {
     const idOf = (a: Article) => `${a.category}/${a.slug}`;
     const nodeMap = new Map<string, any>();
@@ -321,22 +354,23 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       </div>
     </div>`;
 
-    // Browse by category
+    // Browse by category — featured with rich cards
     const browseItems = config.categories
       .filter((c) => (byCategory[c.id] ?? []).length > 0)
       .map((c) => {
         const count = (byCategory[c.id] ?? []).length;
-        return `<div class="bw-browse-cat">
-          <a href="/category/${c.id}" style="color: ${categoryColor(c.id)};">${escapeHtml(c.title)}</a>
-          <span class="bw-browse-desc"> — ${escapeHtml(c.description.slice(0, 40))}</span>
-          <span class="bw-browse-count"> (${count})</span>
-        </div>`;
+        const color = categoryColor(c.id);
+        return `<a class="bw-browse-card" href="/category/${c.id}" style="--cat-color: ${color};">
+          <div class="bw-browse-card-title"><span class="bw-browse-card-mark">◆</span>${escapeHtml(c.title)}</div>
+          <div class="bw-browse-card-desc">${escapeHtml(c.description)}</div>
+          <div class="bw-browse-card-count">${count} articles</div>
+        </a>`;
       })
       .join('');
     const browseCard = `<div class="bw-dash-card full-width">
       <div class="bw-dash-card-header green">Browse by category</div>
       <div class="bw-dash-card-body">
-        <div class="bw-browse-grid">${browseItems}</div>
+        <div class="bw-browse-featured">${browseItems}</div>
       </div>
     </div>`;
 
@@ -711,11 +745,11 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         <div class="bw-welcome-stats">${articles.length} articles across ${config.categories.length} categories · ${totalWords.toLocaleString()} words</div>
       </div>
       <div class="bw-dashboard">
+        ${browseCard}
         ${featuredCard}
         ${recentCard}
         ${aboutCard}
         ${healthCard}
-        ${browseCard}
         ${graphCard}
       </div>
     `;
@@ -835,13 +869,19 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         .join('');
     }
 
+    const nav = renderContextNav(articles, catId);
     const body = `
-      <div class="bw-breadcrumb"><a href="/">Main Page</a> › Category</div>
-      <h1 class="bw-title">Category: ${escapeHtml(cat.title)}</h1>
-      <div class="bw-subtitle">${escapeHtml(cat.description)}</div>
-      <p>This category contains <b>${items.length}</b> article${items.length === 1 ? '' : 's'}.</p>
-      ${toggle}
-      ${viewBody}
+      <div class="bw-page-layout">
+        <aside class="bw-context-nav">${nav}</aside>
+        <div>
+          <div class="bw-breadcrumb"><a href="/">Main Page</a> › Category</div>
+          <h1 class="bw-title">Category: ${escapeHtml(cat.title)}</h1>
+          <div class="bw-subtitle">${escapeHtml(cat.description)}</div>
+          <p>This category contains <b>${items.length}</b> article${items.length === 1 ? '' : 's'}.</p>
+          ${toggle}
+          ${viewBody}
+        </div>
+      </div>
     `;
 
     return htmlShell({
@@ -869,11 +909,20 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     const infobox = buildInfobox(article, catTitle);
     const references = buildReferences(article.sources);
     const catFooter = buildCategoriesFooter(catId, catTitle);
-    const sidebarToc = buildSidebarToc(processed.toc);
+    const sidebarTocInner = buildSidebarToc(processed.toc);
+    const contextNavInner = renderContextNav(articles, catId);
 
+    // Combine context nav + TOC into one sticky sidebar
+    const combinedSidebar = `<aside class="bw-toc-sidebar">
+      ${contextNavInner}
+      ${sidebarTocInner ? `<div class="bw-toc-divider"></div>${sidebarTocInner.replace('<aside class="bw-toc-sidebar">', '<div>').replace(/<\/aside>$/, '</div>')}` : ''}
+    </aside>`;
+
+    const layoutClass =
+      'bw-article-layout' + (!infobox ? ' no-infobox' : '');
     const body = `
-      <div class="bw-article-layout">
-        ${sidebarToc}
+      <div class="${layoutClass}">
+        ${combinedSidebar}
         <div class="bw-article-main">
           <div class="bw-breadcrumb">
             <a href="/">Main Page</a> ›
@@ -881,11 +930,11 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
           </div>
           <h1 class="bw-title">${escapeHtml(article.title)}</h1>
           <div class="bw-subtitle">From ${escapeHtml(config.projectName)} Brand Wiki</div>
-          ${infobox}
           <div class="bw-article">${processed.html}</div>
           ${references}
           ${catFooter}
         </div>
+        <aside class="bw-article-infobox-col">${infobox}</aside>
       </div>
     `;
 
@@ -948,14 +997,20 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         </tr>`
       )
       .join('');
+    const nav = renderContextNav(articles);
     const body = `
-      <div class="bw-breadcrumb"><a href="/">Main Page</a> › All Articles</div>
-      <h1 class="bw-title">All Articles</h1>
-      <div class="bw-subtitle">Complete list of ${articles.length} articles across ${config.categories.length} categories</div>
-      <table class="bw-cat-table">
-        <thead><tr><th>Category</th><th>Article</th><th>Status</th><th>Confidence</th><th>Words</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="bw-page-layout">
+        <aside class="bw-context-nav">${nav}</aside>
+        <div>
+          <div class="bw-breadcrumb"><a href="/">Main Page</a> › All Articles</div>
+          <h1 class="bw-title">All Articles</h1>
+          <div class="bw-subtitle">Complete list of ${articles.length} articles across ${config.categories.length} categories</div>
+          <table class="bw-cat-table">
+            <thead><tr><th>Category</th><th>Article</th><th>Status</th><th>Confidence</th><th>Words</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
     `;
     return htmlShell({
       title: 'All Articles',
@@ -1015,11 +1070,17 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       })
       .join('');
 
+    const nav = renderContextNav(articles);
     const body = `
-      <div class="bw-breadcrumb"><a href="/">Main Page</a> › Search</div>
-      <h1 class="bw-title">Search results</h1>
-      <div class="bw-subtitle">${hits.length} result${hits.length === 1 ? '' : 's'} for <strong>${escapeHtml(query)}</strong></div>
-      ${results || '<p>No results found.</p>'}
+      <div class="bw-page-layout">
+        <aside class="bw-context-nav">${nav}</aside>
+        <div>
+          <div class="bw-breadcrumb"><a href="/">Main Page</a> › Search</div>
+          <h1 class="bw-title">Search results</h1>
+          <div class="bw-subtitle">${hits.length} result${hits.length === 1 ? '' : 's'} for <strong>${escapeHtml(query)}</strong></div>
+          ${results || '<p>No results found.</p>'}
+        </div>
+      </div>
     `;
     return htmlShell({
       title: `Search: ${query}`,
@@ -1053,11 +1114,17 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       })
       .join('');
 
+    const nav = renderContextNav(articles);
     const body = `
-      <div class="bw-breadcrumb"><a href="/">Main Page</a> › Special</div>
-      <h1 class="bw-title">Recent Changes</h1>
-      <div class="bw-subtitle">Articles in order of most recent compile</div>
-      <ul class="bw-recent-list">${rows || '<li>No articles yet.</li>'}</ul>
+      <div class="bw-page-layout">
+        <aside class="bw-context-nav">${nav}</aside>
+        <div>
+          <div class="bw-breadcrumb"><a href="/">Main Page</a> › Special</div>
+          <h1 class="bw-title">Recent Changes</h1>
+          <div class="bw-subtitle">Articles in order of most recent compile</div>
+          <ul class="bw-recent-list">${rows || '<li>No articles yet.</li>'}</ul>
+        </div>
+      </div>
     `;
     return htmlShell({
       title: 'Recent Changes',
@@ -1123,9 +1190,20 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       const cacheKey = rawUrl;
       const cached = htmlCache.get(cacheKey);
       if (cached && url !== '/random') {
+        const etag = '"' + createHash('md5').update(cached).digest('hex').slice(0, 16) + '"';
+        if (req.headers['if-none-match'] === etag) {
+          res.writeHead(304, {
+            ETag: etag,
+            'Cache-Control': 'no-cache',
+            'X-Cache': 'HIT-304',
+          });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-cache',
+          ETag: etag,
           'X-Cache': 'HIT',
         });
         res.end(cached);
@@ -1174,9 +1252,11 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       if (url !== '/random' && url !== '/search') {
         htmlCache.set(cacheKey, html);
       }
+      const etag = '"' + createHash('md5').update(html).digest('hex').slice(0, 16) + '"';
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-cache',
+        ETag: etag,
         'X-Cache': 'MISS',
       });
       res.end(html);

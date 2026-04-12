@@ -1,11 +1,39 @@
 {
   "name": "brandwiki-engine",
-  "version": "0.1.0",
-  "description": "LLM-powered brand wiki compiler. Ingest raw notes, compile a living Markdown knowledge base, lint for contradictions, query via CLI.",
+  "version": "0.2.0",
+  "description": "LLM-powered brand wiki compiler. Ingest raw notes, compile a living Markdown knowledge base, serve it as a Wikipedia-style web UI with interactive backlink graph.",
   "type": "module",
+  "license": "MIT",
+  "author": "22kyasue",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/22kyasue/brandwiki.git"
+  },
+  "homepage": "https://github.com/22kyasue/brandwiki#readme",
+  "bugs": {
+    "url": "https://github.com/22kyasue/brandwiki/issues"
+  },
+  "keywords": [
+    "wiki",
+    "knowledge-base",
+    "llm",
+    "claude",
+    "anthropic",
+    "markdown",
+    "karpathy",
+    "brand",
+    "cli",
+    "documentation"
+  ],
   "bin": {
     "brandwiki": "./dist/cli.js"
   },
+  "files": [
+    "dist/**/*",
+    "templates/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",

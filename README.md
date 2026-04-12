@@ -1,83 +1,230 @@
 # brandwiki-engine
 
-LLM-powered brand wiki compiler. Inspired by Andrej Karpathy's LLM knowledge base pattern and Luke Carter's Brand Wiki system.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org/)
+
+LLM-powered brand wiki compiler. Ingest raw project material, compile a living Markdown knowledge base, and serve it as a **Wikipedia-style web UI** with an **interactive backlink graph**.
+
+Inspired by [Andrej Karpathy's LLM Knowledge Bases pattern](https://x.com/karpathy) and Luke Carter's Brand Wiki system.
+
+---
 
 ## Concept
 
 **Two-layer architecture**:
-- **Engine** (this repo): Reusable CLI tool
+- **Engine** (this repo): Reusable CLI + web UI
 - **Data** (`.brandwiki/` inside each project): Per-project raw material and compiled wiki
 
-You drop raw notes, meeting transcripts, decision logs, and code snapshots into `raw/`. The engine compiles them into a structured Markdown knowledge base in `wiki/`. You rarely edit `wiki/` manually — the LLM owns it.
+You drop raw notes, meeting transcripts, decision logs, code snapshots, and frontmatter into `raw/`. The engine compiles them into a structured Markdown knowledge base in `wiki/`. You rarely edit `wiki/` manually — the LLM owns it.
+
+---
 
 ## Install
 
 ```bash
-cd brandwiki-engine
+git clone https://github.com/22kyasue/brandwiki.git
+cd brandwiki
 npm install
 npm run build
-npm link  # makes `brandwiki` command globally available
+npm link              # makes `brandwiki` available globally
 ```
 
-Set your API key:
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+API key is optional:
+- **Default (recommended)**: uses your Claude Code Pro subscription by spawning `claude -p` as a subprocess — **no API charges**
+- **API mode**: set `ANTHROPIC_API_KEY` and flip `provider: "api"` in config.json
 
-## Usage
+---
+
+## Quick Start
 
 ```bash
-# Inside any project
+# In any project:
 cd my-project
-brandwiki init --template medical-app --language ja --name "My Project"
+brandwiki init --template medical-app --language ja
 
-# Drop raw material into .brandwiki/raw/
-cp -r ../old-notes/* .brandwiki/raw/notes/
+# Drop raw material (or use auto-ingest):
+brandwiki ingest        # copies files matching config.ingestPaths
 
-# Compile raw → wiki
+# Compile raw/ → wiki/ using LLM:
 brandwiki compile
 
-# Health checks
+# Serve the wiki as a web UI:
+brandwiki serve
+# → http://localhost:8787
+
+# Or watch mode (auto-ingest + auto-serve + live reload):
+brandwiki watch
+```
+
+---
+
+## CLI Reference
+
+```bash
+brandwiki init [--template <name>] [--language ja|en] [--name <name>]
+brandwiki compile [--force] [--dry-run]
+brandwiki ingest [--verbose]
+brandwiki watch [--port 8787] [--auto-compile]
+brandwiki serve [--port 8787] [--no-live-reload]
 brandwiki lint
-
-# Search
-brandwiki search "トリアージ"
-
-# Ask questions
-brandwiki query "くすまるのトーンを教えて"
-
-# Status
+brandwiki search <query>
+brandwiki query "<question>"
 brandwiki status
 ```
 
-## Templates
+---
 
-- `generic` — 6 broad categories
-- `medical-app` — 9 categories tuned for healthcare apps (Japanese)
+## Web UI Features
 
-Add your own under `templates/<name>/config.json`.
+Once you run `brandwiki serve`, visit `http://localhost:8787`:
+
+### Main Page (dashboard)
+- **Browse by category** — featured at the top with rich colored cards (one per category)
+- **Featured article** — highest-confidence pick with drop cap and excerpt
+- **Recently updated** — last 6 compiled articles with dates
+- **About** + **Wiki health** — stats and metadata
+- **Article connections** — interactive D3 force-directed **backlink graph**
+  - Drag nodes, **Ctrl+scroll** to zoom, +/− zoom buttons
+  - Hover highlights connected nodes and dims the rest
+  - Double-click a node to open the article
+  - Labels appear on hover / for anchor (high-degree) nodes
+  - Wikipedia-fused aesthetic: light bg, subtle grid, wiki blue accents
+
+### Article Pages
+- Left **sticky sidebar** with:
+  - **Navigation** (Main / All / Recent / Random)
+  - **Categories** (current highlighted with color-coded border)
+  - **Contents** — auto-generated multi-level TOC (H2/H3)
+  - **Scroll-spy**: current section gets a red underline as you scroll
+- Right **Infobox** with Status / Confidence / Updated / Words / Sources
+- MediaWiki-style typography (Linux Libertine / Hiragino Mincho serif titles)
+- Syntax highlighting (highlight.js, lazy-loaded)
+- Mermaid diagram support (lazy-loaded)
+- `[[wiki backlinks]]` auto-resolved to real article links
+
+### Category Pages
+- **3 view modes**: Cards (default) / List / A-Z alphabetical
+- Cards view: featured top card with drop cap, category-colored left accent, hover lift with HUD arrow `[ READ ▸ ]`, KEY badge on top-scored article, staggered fade-in
+- Each card shows excerpt, read time ("5分で読める"), source count, relative time
+- Scoll-spy, search, filter
+
+### Other Features
+- **Top header bar** with global search (focus: width expands) and Main/All/Recent/Random links
+- **Hover prefetch**: links pre-fetch on hover for instant navigation
+- **View Transitions API**: smooth cross-page fades in modern browsers
+- **ETag / 304**: zero-byte revalidation on repeat visits
+- **SSE live-reload**: browser auto-refreshes when wiki/ changes (in watch mode)
+- **In-memory cache**: 1-3ms response times once warm
+- **Print CSS**: clean article printout / PDF export
+
+---
 
 ## Architecture
 
 ```
-brandwiki-engine/          # This repo
+brandwiki-engine/                   # This repo (the tool)
 ├── src/
-│   ├── cli.ts
-│   ├── commands/          # init, compile, lint, search, query, status
-│   └── lib/               # config, manifest, anthropic client
-├── templates/             # Project templates
-└── prompts/               # (reserved for prompt library)
+│   ├── cli.ts                      # CLI entry point
+│   ├── commands/
+│   │   ├── init.ts                 # Scaffold .brandwiki/
+│   │   ├── ingest.ts               # Copy project files into raw/
+│   │   ├── compile.ts              # Claude API → markdown articles
+│   │   ├── lint.ts                 # Detect contradictions
+│   │   ├── search.ts               # Local grep
+│   │   ├── query.ts                # Q&A with wiki context
+│   │   ├── status.ts               # Health stats
+│   │   ├── serve.ts                # HTTP server + SSR
+│   │   └── watch.ts                # chokidar + auto-ingest + serve
+│   └── lib/
+│       ├── config.ts, manifest.ts
+│       ├── anthropic.ts, claude-cli.ts  # LLM providers
+│       ├── article-processor.ts    # Markdown → HTML + TOC + backlinks
+│       └── site-template.ts        # CSS + htmlShell
+├── templates/                      # Project archetypes
+│   ├── generic/                    # 6 broad categories
+│   └── medical-app/                # 9 categories tuned for healthcare (Japanese)
+└── examples/
+    └── kusunavi/                   # Live example — medical app knowledge base
 
-<your-project>/.brandwiki/ # Created by `brandwiki init`
-├── config.json
-├── manifest.json          # Incremental compile tracking
-├── raw/                   # You drop files here
-├── wiki/                  # LLM writes files here
-├── outputs/               # Query results, lint reports
-└── _index/                # Auto-generated indexes
+<your-project>/.brandwiki/           # Created by `brandwiki init`
+├── config.json                     # Categories, models, ingest rules
+├── manifest.json                   # Incremental compile tracking
+├── raw/                            # You drop files here (auto-ingested)
+│   ├── notes/
+│   ├── meetings/
+│   ├── decisions/
+│   ├── references/
+│   └── code-snapshots/
+├── wiki/                           # LLM writes files here
+│   ├── 01-brand/
+│   ├── 02-product/
+│   └── ...
+└── outputs/                        # Query results, lint reports
 ```
+
+---
+
+## Live Example: Kusunavi (クスナビ)
+
+See [`examples/kusunavi/`](./examples/kusunavi) — a compiled brand wiki for a Japanese medical-app project with 31 articles across 9 categories.
+
+To run it locally:
+```bash
+cd examples/kusunavi
+brandwiki serve
+# open http://localhost:8787
+```
+
+---
+
+## Templates
+
+- `generic` — 6 broad categories (Overview, Product, Architecture, Design, Operations, History)
+- `medical-app` — 9 categories tuned for healthcare apps (Japanese): ブランド, プロダクト, 医療ロジック, デザインシステム, アーキテクチャ, コンテンツ, 運用, 開発史, マーケット
+
+Add your own template as `templates/<name>/config.json`.
+
+---
+
+## Config
+
+After `brandwiki init`, edit `.brandwiki/config.json` to customize:
+
+```jsonc
+{
+  "projectName": "My Project",
+  "language": "ja",
+  "template": "medical-app",
+  "provider": "claude-cli",     // "claude-cli" | "api"
+  "categories": [ ... ],
+  "model": {
+    "compile": "claude-sonnet-4-6",
+    "lint": "claude-haiku-4-5-20251001",
+    "query": "claude-sonnet-4-6"
+  },
+  "ingestPaths": [              // auto-copy into raw/ on `brandwiki ingest`
+    { "from": "CLAUDE.md", "to": "raw/notes/" },
+    { "from": "backend/src/services/*.ts", "to": "raw/code-snapshots/services/" },
+    { "from": "notes/**/*.md", "to": "raw/notes/" }
+  ],
+  "watch": {
+    "debounceMs": 20000,
+    "autoCompile": false
+  }
+}
+```
+
+---
 
 ## Credits
 
-- [Andrej Karpathy's LLM Knowledge Bases tweet](https://x.com/karpathy)
-- [Luke Carter — "I Cloned My Brain So AI Could Run My Business"](https://www.youtube.com/watch?v=Ag7g9u6E4Ko)
+- [Andrej Karpathy — LLM Knowledge Bases tweet](https://x.com/karpathy) (the incremental compile + wiki-as-context pattern)
+- [Luke Carter — "I Cloned My Brain So AI Could Run My Business"](https://www.youtube.com/watch?v=Ag7g9u6E4Ko) (brand wiki concept)
+- [Wikipedia / MediaWiki](https://www.mediawiki.org/) (typography, layout aesthetic)
+- [Obsidian](https://obsidian.md/) (graph view interaction patterns)
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
