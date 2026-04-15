@@ -79,7 +79,17 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
 
   const liveReloadScript = options.noLiveReload ? '' : `<script>
     (function(){
-      try {
+      function init(){
+        try {
+          _run();
+        } catch (e) {}
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+      function _run(){
         var el = document.getElementById('bw-live');
         var timeEl = document.getElementById('bw-live-time');
         var STORAGE_KEY = 'bw-last-update';
@@ -150,7 +160,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
 
         window.addEventListener('pagehide', killSSE);
         window.addEventListener('beforeunload', killSSE);
-      } catch (e) {}
+      }
     })();
   </script>`;
 
