@@ -126,6 +126,57 @@ a.new { color: #ba0000; }
   .bw-topbar-search input:focus { width: 220px; }
 }
 
+/* === Live indicator (watch mode) === */
+.bw-live {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border: 1px solid #d8dce0;
+  background: #f8f9fa;
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 11px;
+  color: #54595d;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.bw-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+.bw-live.connected {
+  background: #f0faf4;
+  border-color: #b6e0c4;
+  color: #1b6e3e;
+}
+.bw-live.connected .bw-live-dot {
+  background: #00a86b;
+  box-shadow: 0 0 0 0 rgba(0, 168, 107, 0.55);
+  animation: bw-live-pulse 2.2s ease-in-out infinite;
+}
+@keyframes bw-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 168, 107, 0.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(0, 168, 107, 0); }
+}
+.bw-live.disconnected {
+  background: #fdf4f5;
+  border-color: #e8c4c8;
+  color: #a12a2a;
+}
+.bw-live.disconnected .bw-live-dot { background: #c94a4a; }
+.bw-live-text { font-weight: 600; letter-spacing: 0.3px; }
+.bw-live-time { color: #72777d; font-weight: 500; }
+.bw-live.connected .bw-live-time { color: #47856a; }
+@media (max-width: 800px) {
+  .bw-live { padding: 5px 8px; font-size: 10px; gap: 5px; }
+  .bw-live-text { display: none; }
+}
+
 /* === Page body === */
 .bw-page {
   min-height: calc(100vh - 54px);
@@ -1774,6 +1825,11 @@ ${params.extraHead ?? ''}
     <input type="text" name="q" placeholder="Search wiki..." autocomplete="off">
     <span class="bw-topbar-search-kbd">⏎</span>
   </form>
+  <div class="bw-live disconnected" id="bw-live" title="Watch モードに接続中...">
+    <span class="bw-live-dot" aria-hidden="true"></span>
+    <span class="bw-live-text">Offline</span>
+    <span class="bw-live-time" id="bw-live-time">—</span>
+  </div>
 </header>
 <main class="bw-page">
   <div class="bw-page-inner">

@@ -80,15 +80,74 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
   const liveReloadScript = options.noLiveReload ? '' : `<script>
     (function(){
       try {
-        var es = new EventSource('/_events');
-        var closed = false;
-        function killSSE() {
+        var el = document.getElementById('bw-live');
+        var timeEl = document.getElementById('bw-live-time');
+        var STORAGE_KEY = 'bw-last-update';
+
+        function pad(n){ return n < 10 ? '0' + n : '' + n; }
+        function formatTime(ms){
+          var d = new Date(ms);
+          return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        }
+        function formatFull(ms){
+          var d = new Date(ms);
+          return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        }
+        function setStatus(connected, lastUpdateMs){
+          if (!el) return;
+          el.classList.toggle('connected', !!connected);
+          el.classList.toggle('disconnected', !connected);
+          var textEl = el.querySelector('.bw-live-text');
+          if (textEl) textEl.textContent = connected ? 'Live' : 'Offline';
+          if (timeEl){
+            if (lastUpdateMs){
+              timeEl.textContent = formatTime(lastUpdateMs);
+              el.title = (connected ? 'Watch モードに接続中' : '切断中')
+                + ' · 最終更新: ' + formatFull(lastUpdateMs);
+            } else if (connected){
+              timeEl.textContent = 'ready';
+              el.title = 'Watch モードに接続中 (まだ更新なし)';
+            } else {
+              timeEl.textContent = '—';
+              el.title = 'Watch モードに未接続';
+            }
+          }
+        }
+
+        // 起動時: 直近の更新時刻を復元 (ページリロードまたいでも残す)
+        var storedRaw;
+        try { storedRaw = sessionStorage.getItem(STORAGE_KEY); } catch(e) {}
+        var storedMs = storedRaw ? parseInt(storedRaw, 10) : 0;
+        setStatus(false, storedMs || 0);
+
+        var es, closed = false;
+        function killSSE(){
           if (closed) return;
           closed = true;
-          try { es.close(); } catch(e) {}
+          try { es && es.close(); } catch(e) {}
         }
-        es.addEventListener('reload', function(){ killSSE(); location.reload(); });
-        es.onerror = function(){ /* browser auto-retries */ };
+
+        try {
+          es = new EventSource('/_events');
+          es.onopen = function(){ setStatus(true, storedMs || 0); };
+          // サーバーは接続直後に 'connected' イベントを送る
+          es.addEventListener('connected', function(){ setStatus(true, storedMs || 0); });
+          es.addEventListener('reload', function(ev){
+            var ts = parseInt(ev.data, 10) || Date.now();
+            try { sessionStorage.setItem(STORAGE_KEY, String(ts)); } catch(e) {}
+            setStatus(true, ts);
+            killSSE();
+            location.reload();
+          });
+          es.onerror = function(){
+            // ブラウザが自動リトライするので 'offline' に落とすだけ
+            setStatus(false, storedMs || 0);
+          };
+        } catch (e) {
+          setStatus(false, storedMs || 0);
+        }
+
         window.addEventListener('pagehide', killSSE);
         window.addEventListener('beforeunload', killSSE);
       } catch (e) {}
