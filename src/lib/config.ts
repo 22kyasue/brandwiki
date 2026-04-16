@@ -17,6 +17,7 @@ export interface BrandwikiConfig {
     compile: string;
     lint: string;
     query: string;
+    explain?: string;
   };
   sources: Array<{ path: string; type: string; glob?: string }>;
   ingestPaths?: IngestRule[];

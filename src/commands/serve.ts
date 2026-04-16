@@ -23,6 +23,9 @@ import {
   buildCategoriesFooter,
   type ArticleIndexEntry,
 } from '../lib/article-processor.js';
+import { callLLMStream } from '../lib/anthropic.js';
+import { scanProject, getFileDetail, type ExplainProjectData } from '../lib/explain/data.js';
+import { explainPageHtml } from '../lib/explain/template.js';
 
 interface ServeOptions {
   port?: string;
@@ -35,9 +38,11 @@ const sseClients = new Set<import('node:http').ServerResponse>();
 let cachedArticles: any[] | null = null;
 let cachedManifestMtime = 0;
 const htmlCache = new Map<string, string>();
+let cachedExplainData: ExplainProjectData | null = null;
 
 export function invalidateCache(): void {
   cachedArticles = null;
+  cachedExplainData = null;
   htmlCache.clear();
 }
 
@@ -266,6 +271,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       .join('');
 
     const navItems = `<li><a href="/">🏠 Main Page</a></li>
+      <li><a href="/graph">🔗 Graph</a></li>
       <li><a href="/all">📄 All Articles</a></li>
       <li><a href="/special/recent-changes">🕒 Recent</a></li>
       <li><a href="/random">🎲 Random</a></li>`;
@@ -317,6 +323,538 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       }
     }
     return { nodes: Array.from(nodeMap.values()), links };
+  }
+
+  function buildGraphScript(
+    graph: { nodes: any[]; links: any[] },
+    catColorMap: Record<string, string>,
+    catTitleMap: Record<string, string>,
+    opts: { explainMode: boolean },
+  ): string {
+    const explainBlock = opts.explainMode ? `
+  // === Explain mode: selection + streaming ===
+  var selected = [];
+  var explainNodeBtn = document.getElementById('bw-explain-node-btn');
+  var explainEdgeBtn = document.getElementById('bw-explain-edge-btn');
+  var explainPanel = document.getElementById('bw-explain-panel');
+  var explainBody = document.getElementById('bw-explain-body');
+  var explainClose = document.getElementById('bw-explain-close');
+  var explainToggle = document.getElementById('bw-explain-toggle');
+  var graphPage = document.querySelector('.bw-graph-page');
+
+  function updateSelectionUI(){
+    var ids = selected.map(function(n){ return n.id; });
+    node.classed('selected', function(d){ return ids.indexOf(d.id) !== -1; });
+    if (explainNodeBtn) explainNodeBtn.disabled = selected.length < 1;
+    if (explainEdgeBtn) {
+      var canEdge = selected.length === 2;
+      if (canEdge) {
+        var a = adjacency[selected[0].id];
+        canEdge = a && a.has(selected[1].id);
+      }
+      explainEdgeBtn.disabled = !canEdge;
+    }
+  }
+
+  function toggleSelect(d){
+    var idx = selected.findIndex(function(n){ return n.id === d.id; });
+    if (idx !== -1) {
+      selected.splice(idx, 1);
+    } else {
+      if (selected.length >= 2) selected.shift();
+      selected.push(d);
+    }
+    updateSelectionUI();
+  }
+
+  function clearSelection(){
+    selected = [];
+    updateSelectionUI();
+  }
+
+  if (explainClose) explainClose.addEventListener('click', function(){
+    if (graphPage) graphPage.classList.add('panel-collapsed');
+  });
+  if (explainToggle) explainToggle.addEventListener('click', function(){
+    if (graphPage) graphPage.classList.remove('panel-collapsed');
+  });
+
+  function simpleMarkdown(text){
+    return text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+      .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
+      .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/(<li>.*<\\/li>)/gs, '<ul>$1</ul>')
+      .replace(/<\\/ul>\\s*<ul>/g, '')
+      .replace(/\\n\\n/g, '</p><p>')
+      .replace(/\\n/g, '<br>');
+  }
+
+  function triggerExplain(type){
+    if (graphPage) graphPage.classList.remove('panel-collapsed');
+    if (explainPanel) explainPanel.classList.add('open');
+    if (!explainBody) return;
+    explainBody.innerHTML = '<div class="bw-explain-loading"><span>Thinking</span><span class="bw-explain-loading-dots"><span></span><span></span><span></span></span></div>';
+
+    var payload = { type: type, nodeId: selected[0] ? selected[0].id : '' };
+    if (type === 'edge' && selected[1]) payload.targetId = selected[1].id;
+
+    fetch('/api/explain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function(response){
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var fullText = '';
+      explainBody.innerHTML = '<div class="bw-explain-content bw-explain-cursor"></div>';
+      var contentEl = explainBody.querySelector('.bw-explain-content');
+
+      function read(){
+        reader.read().then(function(result){
+          if (result.done) {
+            if (contentEl) contentEl.classList.remove('bw-explain-cursor');
+            return;
+          }
+          var chunk = decoder.decode(result.value, { stream: true });
+          var lines = chunk.split('\\n');
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.startsWith('event: done')) {
+              if (contentEl) contentEl.classList.remove('bw-explain-cursor');
+              return;
+            }
+            if (line.startsWith('event: error')) {
+              contentEl.innerHTML = '<p style="color:#ba0000;">Error generating explanation.</p>';
+              return;
+            }
+            if (line.startsWith('data: ')) {
+              try {
+                var d = JSON.parse(line.slice(6));
+                if (d.text) {
+                  fullText += d.text;
+                  contentEl.innerHTML = simpleMarkdown(fullText);
+                  explainBody.scrollTop = explainBody.scrollHeight;
+                }
+              } catch(e) {}
+            }
+          }
+          read();
+        }).catch(function(err){
+          contentEl.innerHTML += '<p style="color:#ba0000;">Stream error: ' + err.message + '</p>';
+        });
+      }
+      read();
+    }).catch(function(err){
+      explainBody.innerHTML = '<p style="color:#ba0000;">Failed to connect: ' + err.message + '</p>';
+    });
+  }
+
+  if (explainNodeBtn) explainNodeBtn.addEventListener('click', function(){ triggerExplain('node'); });
+  if (explainEdgeBtn) explainEdgeBtn.addEventListener('click', function(){ triggerExplain('edge'); });
+` : '';
+
+    const clickHandler = opts.explainMode
+      ? `node.on('click', function(event, d){
+    event.stopPropagation();
+    toggleSelect(d);
+  });`
+      : `node.on('click', function(event, d){
+    event.stopPropagation();
+    var sel = d3.select(this);
+    if (sel.classed('pinned')) {
+      sel.classed('pinned', false);
+      d.fx = null; d.fy = null;
+    } else {
+      sel.classed('pinned', true);
+      d.fx = d.x; d.fy = d.y;
+    }
+    simulation.alpha(0.3).restart();
+  });`;
+
+    const escapeHandler = opts.explainMode
+      ? `else if (e.key === 'Escape') {
+      searchInput.value = '';
+      searchInput.dispatchEvent(new Event('input'));
+      clearSelection();
+      unpinAll();
+    }`
+      : `else if (e.key === 'Escape') {
+      searchInput.value = '';
+      searchInput.dispatchEvent(new Event('input'));
+      unpinAll();
+    }`;
+
+    const tooltipHint = opts.explainMode
+      ? "click to select · dbl-click to open"
+      : "click to pin · dbl-click to open";
+
+    return `<script>
+(function(){
+  if (!window.d3) return;
+  var data = ${JSON.stringify(graph)};
+  var colors = ${JSON.stringify(catColorMap)};
+  var catTitles = ${JSON.stringify(catTitleMap)};
+  var container = document.getElementById('bw-graph-container');
+  var svgEl = document.getElementById('bw-graph-svg');
+  var tooltipEl = document.getElementById('bw-graph-tooltip');
+  if (!container || !svgEl) return;
+
+  var width = container.clientWidth;
+  var height = container.clientHeight || 720;
+  var svg = d3.select(svgEl).attr('viewBox', '0 0 ' + width + ' ' + height);
+  var g = svg.append('g').attr('class', 'zoom-layer');
+
+  var adjacency = {};
+  data.nodes.forEach(function(n){ adjacency[n.id] = new Set([n.id]); });
+  data.links.forEach(function(l){
+    var s = typeof l.source === 'string' ? l.source : l.source.id;
+    var t = typeof l.target === 'string' ? l.target : l.target.id;
+    adjacency[s].add(t);
+    adjacency[t].add(s);
+  });
+
+  var linkDist = 140;
+  var chargeStr = -380;
+  function atomRadius(d){ return 5 + Math.min(14, d.degree * 1.6); }
+  var simulation = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.links).id(function(d){ return d.id; }).distance(linkDist).strength(0.55))
+    .force('charge', d3.forceManyBody().strength(chargeStr).distanceMax(500))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collide', d3.forceCollide().radius(function(d){ return atomRadius(d) + 8; }))
+    .force('x', d3.forceX(width / 2).strength(0.035))
+    .force('y', d3.forceY(height / 2).strength(0.035));
+
+  var link = g.append('g').attr('class', 'links').selectAll('line')
+    .data(data.links).enter().append('line').attr('class', 'link');
+
+  var topN = Math.min(7, Math.ceil(data.nodes.length * 0.35));
+  var anchorIds = new Set(
+    data.nodes.slice().sort(function(a, b){ return b.degree - a.degree; }).slice(0, topN).map(function(n){ return n.id; })
+  );
+
+  var node = g.append('g').attr('class', 'nodes').selectAll('g')
+    .data(data.nodes).enter().append('g')
+    .attr('class', function(d){ return 'node' + (anchorIds.has(d.id) ? ' anchor' : ''); });
+
+  node.append('circle')
+    .attr('class', 'atom')
+    .attr('r', function(d){ return atomRadius(d); })
+    .attr('fill', function(d){ return colors[d.category] || '#888888'; });
+
+  node.append('circle')
+    .attr('class', 'atom-ring')
+    .attr('r', function(d){ return atomRadius(d) + 4; })
+    .attr('fill', 'none');
+
+  node.append('text')
+    .attr('class', 'label')
+    .attr('dy', function(d){ return atomRadius(d) + 15; })
+    .text(function(d){ return d.label.length > 14 ? d.label.slice(0, 13) + '…' : d.label; });
+
+  node.style('opacity', 0).transition().duration(800).delay(function(_,i){ return i * 30; }).style('opacity', 1);
+  link.style('opacity', 0).transition().duration(600).delay(400).style('opacity', 1);
+
+  var drag = d3.drag()
+    .on('start', function(event, d){
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x; d.fy = d.y;
+    })
+    .on('drag', function(event, d){
+      d.fx = event.x; d.fy = event.y;
+    })
+    .on('end', function(event, d){
+      if (!event.active) simulation.alphaTarget(0);
+      if (!event.sourceEvent || !event.sourceEvent.shiftKey) {
+        d.fx = null; d.fy = null;
+      } else {
+        d3.select(this).classed('pinned', true);
+      }
+    });
+  node.call(drag);
+
+  var zoomLevelEl = document.getElementById('bw-zoom-level');
+  var zoom = d3.zoom()
+    .scaleExtent([0.25, 5])
+    .wheelDelta(function(event){
+      return -event.deltaY * (event.deltaMode === 1 ? 0.025 : event.deltaMode ? 0.5 : 0.0009);
+    })
+    .filter(function(event){
+      if (event.type === 'wheel') return event.ctrlKey || event.metaKey;
+      if (event.type === 'mousedown' || event.type === 'touchstart') {
+        return event.target === svgEl || event.target.tagName === 'svg';
+      }
+      return !event.button;
+    })
+    .on('zoom', function(event){
+      g.attr('transform', event.transform);
+      svg.classed('zoomed-in', event.transform.k > 1.3);
+      if (zoomLevelEl) zoomLevelEl.textContent = Math.round(event.transform.k * 100) + '%';
+    });
+  svg.call(zoom).on('dblclick.zoom', null);
+
+  function zoomStep(factor){
+    svg.transition().duration(220).ease(d3.easeCubicOut).call(zoom.scaleBy, factor);
+  }
+  function zoomReset(){
+    svg.transition().duration(360).ease(d3.easeCubicOut).call(zoom.transform, d3.zoomIdentity);
+  }
+  var btnIn = document.getElementById('bw-zoom-in');
+  var btnOut = document.getElementById('bw-zoom-out');
+  var btnReset = document.getElementById('bw-zoom-reset');
+  if (btnIn) btnIn.addEventListener('click', function(){ zoomStep(1.4); });
+  if (btnOut) btnOut.addEventListener('click', function(){ zoomStep(0.7); });
+  if (btnReset) btnReset.addEventListener('click', zoomReset);
+
+  function showTooltip(d, evt){
+    tooltipEl.classList.add('visible');
+    tooltipEl.style.setProperty('--tt-color', colors[d.category] || '#72777d');
+    tooltipEl.innerHTML =
+      '<div class="tt-cat">' + (catTitles[d.category] || d.category) + '</div>' +
+      '<div class="tt-title">' + escapeHTML(d.label) + '</div>' +
+      '<div class="tt-meta">' + d.degree + ' connections</div>' +
+      '<div class="tt-hint">${tooltipHint}</div>';
+    moveTooltip(evt);
+  }
+  function moveTooltip(evt){
+    var x = evt.clientX + 14;
+    var y = evt.clientY + 14;
+    var w = tooltipEl.offsetWidth;
+    var h = tooltipEl.offsetHeight;
+    if (x + w > window.innerWidth - 10) x = evt.clientX - w - 14;
+    if (y + h > window.innerHeight - 10) y = evt.clientY - h - 14;
+    tooltipEl.style.left = x + 'px';
+    tooltipEl.style.top = y + 'px';
+  }
+  function hideTooltip(){ tooltipEl.classList.remove('visible'); }
+  function escapeHTML(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  node.on('mouseenter', function(event, d){
+    var connected = adjacency[d.id] || new Set([d.id]);
+    node.classed('dim', function(n){ return !connected.has(n.id); });
+    node.classed('highlight', function(n){ return connected.has(n.id); });
+    link.classed('dim', function(l){
+      var s = typeof l.source === 'object' ? l.source.id : l.source;
+      var t = typeof l.target === 'object' ? l.target.id : l.target;
+      return !(s === d.id || t === d.id);
+    });
+    link.classed('highlight', function(l){
+      var s = typeof l.source === 'object' ? l.source.id : l.source;
+      var t = typeof l.target === 'object' ? l.target.id : l.target;
+      return s === d.id || t === d.id;
+    });
+    showTooltip(d, event);
+  });
+  node.on('mousemove', function(event){ moveTooltip(event); });
+  node.on('mouseleave', function(){
+    node.classed('dim', false).classed('highlight', false);
+    link.classed('dim', false).classed('highlight', false);
+    hideTooltip();
+  });
+
+  ${clickHandler}
+
+  node.on('dblclick', function(event, d){
+    event.stopPropagation();
+    window.location.href = d.url;
+  });
+
+  svg.on('dblclick', function(){
+    simulation.alpha(0.7).restart();
+  });
+
+  simulation.on('tick', function(){
+    link.attr('x1', function(d){ return d.source.x; })
+        .attr('y1', function(d){ return d.source.y; })
+        .attr('x2', function(d){ return d.target.x; })
+        .attr('y2', function(d){ return d.target.y; });
+    node.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
+  });
+
+  var searchInput = document.getElementById('bw-graph-search');
+  searchInput.addEventListener('input', function(){
+    var q = this.value.trim().toLowerCase();
+    node.classed('hit', function(d){ return q && d.label.toLowerCase().indexOf(q) !== -1; });
+    node.classed('dim', function(d){ return q && d.label.toLowerCase().indexOf(q) === -1; });
+    link.classed('dim', function(l){
+      if (!q) return false;
+      var s = typeof l.source === 'object' ? l.source.label : '';
+      var t = typeof l.target === 'object' ? l.target.label : '';
+      return s.toLowerCase().indexOf(q) === -1 && t.toLowerCase().indexOf(q) === -1;
+    });
+  });
+
+  var mode = 'force';
+  function applyMode(){
+    data.nodes.forEach(function(n){ n.fx = null; n.fy = null; });
+    node.classed('pinned', false);
+    if (mode === 'force') {
+      simulation.force('r', null).force('gridX', null).force('gridY', null);
+      simulation.force('x', d3.forceX(width/2).strength(0.04));
+      simulation.force('y', d3.forceY(height/2).strength(0.04));
+    } else if (mode === 'radial') {
+      var cats = Object.keys(colors);
+      simulation.force('x', null).force('y', null);
+      simulation.force('r', d3.forceRadial(function(d){
+        var idx = cats.indexOf(d.category);
+        return 80 + (idx % 4) * 60;
+      }, width/2, height/2).strength(0.8));
+    } else if (mode === 'grid') {
+      var cats = Object.keys(colors).filter(function(c){
+        return data.nodes.some(function(n){ return n.category === c; });
+      });
+      var cols = Math.ceil(Math.sqrt(cats.length));
+      var cellW = width / (cols + 1);
+      var cellH = height / (cols + 1);
+      var catPos = {};
+      cats.forEach(function(c, i){
+        catPos[c] = { x: cellW * ((i % cols) + 1), y: cellH * (Math.floor(i / cols) + 1) };
+      });
+      simulation.force('r', null);
+      simulation.force('x', d3.forceX(function(d){ return (catPos[d.category] || {x: width/2}).x; }).strength(0.5));
+      simulation.force('y', d3.forceY(function(d){ return (catPos[d.category] || {y: height/2}).y; }).strength(0.5));
+    }
+    simulation.alpha(0.7).restart();
+  }
+
+  var paused = false;
+  function togglePause(){
+    paused = !paused;
+    if (paused) simulation.stop(); else simulation.restart();
+  }
+  function fitView(){
+    svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+  }
+  function unpinAll(){
+    data.nodes.forEach(function(n){ n.fx = null; n.fy = null; });
+    node.classed('pinned', false);
+    simulation.alpha(0.5).restart();
+  }
+
+  var hidden = new Set();
+  document.querySelectorAll('#bw-graph-legend .bw-legend-item').forEach(function(el, idx){
+    var catId = Object.keys(catTitles)[idx];
+    el.addEventListener('click', function(){
+      if (hidden.has(catId)) hidden.delete(catId); else hidden.add(catId);
+      el.classList.toggle('disabled');
+      node.style('display', function(d){ return hidden.has(d.category) ? 'none' : null; });
+      link.style('display', function(l){
+        var s = typeof l.source === 'object' ? l.source.category : null;
+        var t = typeof l.target === 'object' ? l.target.category : null;
+        return (hidden.has(s) || hidden.has(t)) ? 'none' : null;
+      });
+    });
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === ' ') { e.preventDefault(); togglePause(); }
+    else if (e.key === 'f' || e.key === 'F') { fitView(); }
+    else if (e.key === '+' || e.key === '=') { zoomStep(1.4); }
+    else if (e.key === '-' || e.key === '_') { zoomStep(0.7); }
+    else if (e.key === '0') { zoomReset(); }
+    ${escapeHandler}
+  });
+
+  window.addEventListener('resize', function(){
+    width = container.clientWidth;
+    height = container.clientHeight || 600;
+    svg.attr('viewBox', '0 0 ' + width + ' ' + height);
+    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    simulation.alpha(0.3).restart();
+  });
+
+  ${explainBlock}
+})();
+</script>`;
+  }
+
+  function renderGraphPage(articles: Article[], manifest: Manifest): string {
+    const graph = buildBacklinkGraph(articles);
+    const byCategory: Record<string, Article[]> = {};
+    for (const a of articles) {
+      if (!byCategory[a.category]) byCategory[a.category] = [];
+      byCategory[a.category].push(a);
+    }
+
+    const catColorMap: Record<string, string> = {};
+    const catTitleMap: Record<string, string> = {};
+    for (const c of config.categories) {
+      catColorMap[c.id] = categoryColor(c.id);
+      catTitleMap[c.id] = c.title;
+    }
+
+    const graphLegend = config.categories
+      .filter((c) => (byCategory[c.id] ?? []).length > 0)
+      .map(
+        (c) =>
+          `<span class="bw-legend-item"><span class="bw-legend-dot" style="background: ${categoryColor(c.id)}"></span>${escapeHtml(c.title)}</span>`
+      )
+      .join('');
+
+    const graphScript = buildGraphScript(graph, catColorMap, catTitleMap, { explainMode: true });
+
+    const body = `
+      <div class="bw-graph-page">
+        <div class="bw-graph-page-main">
+          <div class="bw-graph-legend" id="bw-graph-legend">
+            <span class="bw-legend-label">Article Connections</span>
+            <span style="color: #a2a9b1;">|</span>
+            ${graphLegend}
+          </div>
+          <div class="bw-graph-container" id="bw-graph-container">
+            <svg id="bw-graph-svg"></svg>
+            <div class="bw-graph-mini-search">
+              <input type="search" id="bw-graph-search" placeholder="Search..." />
+            </div>
+            <div class="bw-graph-zoom">
+              <button id="bw-zoom-out" title="Zoom out (-)">&#x2212;</button>
+              <div class="bw-graph-zoom-level" id="bw-zoom-level">100%</div>
+              <button id="bw-zoom-in" title="Zoom in (+)">&#xFF0B;</button>
+              <button id="bw-zoom-reset" title="Reset (0)">&#x2299;</button>
+            </div>
+            <div class="bw-graph-explain-actions">
+              <button id="bw-explain-node-btn" disabled>Explain selected</button>
+              <button id="bw-explain-edge-btn" class="secondary" disabled>Explain connection</button>
+            </div>
+            <div class="bw-graph-mini-hint">
+              <kbd>click</kbd> select · <kbd>dbl-click</kbd> open · <kbd>ctrl+scroll</kbd> zoom · <kbd>Esc</kbd> clear
+            </div>
+            <div class="bw-graph-tooltip" id="bw-graph-tooltip"></div>
+          </div>
+          <button class="bw-explain-toggle" id="bw-explain-toggle">Show Explain Panel</button>
+        </div>
+        <aside class="bw-explain-panel" id="bw-explain-panel">
+          <div class="bw-explain-panel-header">
+            <span>Explain</span>
+            <button class="bw-explain-panel-close" id="bw-explain-close">&times;</button>
+          </div>
+          <div class="bw-explain-panel-body" id="bw-explain-body">
+            <div class="bw-explain-empty">
+              <div class="bw-explain-empty-icon">&#x1F50D;</div>
+              <div>Select a node to explain an article,<br>or select two connected nodes to<br>explain their relationship.</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    `;
+
+    return htmlShell({
+      title: 'Graph — Explain',
+      projectName: config.projectName,
+      categories: config.categories,
+      body,
+      lastCompile: manifest.lastCompile,
+      extraHead: liveReloadScript,
+      extraBodyEnd: graphScript,
+      needsD3: true,
+    });
   }
 
   function renderMainPage(articles: Article[], manifest: Manifest): string {
@@ -485,327 +1023,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       catColorMap[c.id] = categoryColor(c.id);
       catTitleMap[c.id] = c.title;
     }
-    const graphScript = `<script>
-(function(){
-  if (!window.d3) return;
-  var data = ${JSON.stringify(graph)};
-  var colors = ${JSON.stringify(catColorMap)};
-  var catTitles = ${JSON.stringify(catTitleMap)};
-  var container = document.getElementById('bw-graph-container');
-  var svgEl = document.getElementById('bw-graph-svg');
-  var tooltipEl = document.getElementById('bw-graph-tooltip');
-  if (!container || !svgEl) return;
-
-  var width = container.clientWidth;
-  var height = container.clientHeight || 720;
-  var svg = d3.select(svgEl).attr('viewBox', '0 0 ' + width + ' ' + height);
-  var g = svg.append('g').attr('class', 'zoom-layer');
-
-  // Build adjacency for hover highlight
-  var adjacency = {};
-  data.nodes.forEach(function(n){ adjacency[n.id] = new Set([n.id]); });
-  data.links.forEach(function(l){
-    var s = typeof l.source === 'string' ? l.source : l.source.id;
-    var t = typeof l.target === 'string' ? l.target : l.target.id;
-    adjacency[s].add(t);
-    adjacency[t].add(s);
-  });
-
-  // Simulation — Obsidian-like spacing
-  var linkDist = 140;
-  var chargeStr = -380;
-  function atomRadius(d){ return 5 + Math.min(14, d.degree * 1.6); }
-  var simulation = d3.forceSimulation(data.nodes)
-    .force('link', d3.forceLink(data.links).id(function(d){ return d.id; }).distance(linkDist).strength(0.55))
-    .force('charge', d3.forceManyBody().strength(chargeStr).distanceMax(500))
-    .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collide', d3.forceCollide().radius(function(d){ return atomRadius(d) + 8; }))
-    .force('x', d3.forceX(width / 2).strength(0.035))
-    .force('y', d3.forceY(height / 2).strength(0.035));
-
-  // Links (render below nodes)
-  var link = g.append('g').attr('class', 'links').selectAll('line')
-    .data(data.links).enter().append('line').attr('class', 'link');
-
-  // Mark top-N by degree as permanent anchors (labels always visible)
-  var topN = Math.min(7, Math.ceil(data.nodes.length * 0.35));
-  var anchorIds = new Set(
-    data.nodes.slice().sort(function(a, b){ return b.degree - a.degree; }).slice(0, topN).map(function(n){ return n.id; })
-  );
-
-  // Nodes
-  var node = g.append('g').attr('class', 'nodes').selectAll('g')
-    .data(data.nodes).enter().append('g')
-    .attr('class', function(d){ return 'node' + (anchorIds.has(d.id) ? ' anchor' : ''); });
-
-  // Flat solid circle (Obsidian style)
-  node.append('circle')
-    .attr('class', 'atom')
-    .attr('r', function(d){ return atomRadius(d); })
-    .attr('fill', function(d){ return colors[d.category] || '#888888'; });
-
-  // Pin ring (shown when pinned)
-  node.append('circle')
-    .attr('class', 'atom-ring')
-    .attr('r', function(d){ return atomRadius(d) + 4; })
-    .attr('fill', 'none');
-
-  // Label below the node
-  node.append('text')
-    .attr('class', 'label')
-    .attr('dy', function(d){ return atomRadius(d) + 15; })
-    .text(function(d){ return d.label.length > 14 ? d.label.slice(0, 13) + '…' : d.label; });
-
-  // Entry animation
-  node.style('opacity', 0).transition().duration(800).delay(function(_,i){ return i * 30; }).style('opacity', 1);
-  link.style('opacity', 0).transition().duration(600).delay(400).style('opacity', 1);
-
-  // Drag
-  var drag = d3.drag()
-    .on('start', function(event, d){
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      d.fx = d.x; d.fy = d.y;
-    })
-    .on('drag', function(event, d){
-      d.fx = event.x; d.fy = event.y;
-    })
-    .on('end', function(event, d){
-      if (!event.active) simulation.alphaTarget(0);
-      // Hold shift to pin on drop; otherwise release
-      if (!event.sourceEvent || !event.sourceEvent.shiftKey) {
-        d.fx = null; d.fy = null;
-      } else {
-        d3.select(this).classed('pinned', true);
-      }
-    });
-  node.call(drag);
-
-  // Zoom & pan — wheel zoom only with Ctrl/Cmd; slower wheel delta for control
-  var zoomLevelEl = document.getElementById('bw-zoom-level');
-  var zoom = d3.zoom()
-    .scaleExtent([0.25, 5])
-    .wheelDelta(function(event){
-      // ~2x slower than d3 default for finer control
-      return -event.deltaY * (event.deltaMode === 1 ? 0.025 : event.deltaMode ? 0.5 : 0.0009);
-    })
-    .filter(function(event){
-      if (event.type === 'wheel') return event.ctrlKey || event.metaKey;
-      if (event.type === 'mousedown' || event.type === 'touchstart') {
-        return event.target === svgEl || event.target.tagName === 'svg';
-      }
-      return !event.button;
-    })
-    .on('zoom', function(event){
-      g.attr('transform', event.transform);
-      svg.classed('zoomed-in', event.transform.k > 1.3);
-      if (zoomLevelEl) zoomLevelEl.textContent = Math.round(event.transform.k * 100) + '%';
-    });
-  svg.call(zoom).on('dblclick.zoom', null);
-
-  // Zoom buttons — discrete steps with smooth transition
-  function zoomStep(factor){
-    svg.transition().duration(220).ease(d3.easeCubicOut).call(zoom.scaleBy, factor);
-  }
-  function zoomReset(){
-    svg.transition().duration(360).ease(d3.easeCubicOut).call(zoom.transform, d3.zoomIdentity);
-  }
-  var btnIn = document.getElementById('bw-zoom-in');
-  var btnOut = document.getElementById('bw-zoom-out');
-  var btnReset = document.getElementById('bw-zoom-reset');
-  if (btnIn) btnIn.addEventListener('click', function(){ zoomStep(1.4); });
-  if (btnOut) btnOut.addEventListener('click', function(){ zoomStep(0.7); });
-  if (btnReset) btnReset.addEventListener('click', zoomReset);
-
-  // Tooltip
-  function showTooltip(d, evt){
-    tooltipEl.classList.add('visible');
-    tooltipEl.style.setProperty('--tt-color', colors[d.category] || '#72777d');
-    tooltipEl.innerHTML =
-      '<div class="tt-cat">' + (catTitles[d.category] || d.category) + '</div>' +
-      '<div class="tt-title">' + escapeHTML(d.label) + '</div>' +
-      '<div class="tt-meta">' + d.degree + ' connections</div>' +
-      '<div class="tt-hint">click to pin · dbl-click to open</div>';
-    moveTooltip(evt);
-  }
-  function moveTooltip(evt){
-    var x = evt.clientX + 14;
-    var y = evt.clientY + 14;
-    var w = tooltipEl.offsetWidth;
-    var h = tooltipEl.offsetHeight;
-    if (x + w > window.innerWidth - 10) x = evt.clientX - w - 14;
-    if (y + h > window.innerHeight - 10) y = evt.clientY - h - 14;
-    tooltipEl.style.left = x + 'px';
-    tooltipEl.style.top = y + 'px';
-  }
-  function hideTooltip(){ tooltipEl.classList.remove('visible'); }
-  function escapeHTML(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-  // Hover highlight — connected nodes stay, others dim
-  node.on('mouseenter', function(event, d){
-    var connected = adjacency[d.id] || new Set([d.id]);
-    node.classed('dim', function(n){ return !connected.has(n.id); });
-    // Highlight hovered AND its connected neighbors so their labels appear
-    node.classed('highlight', function(n){ return connected.has(n.id); });
-    link.classed('dim', function(l){
-      var s = typeof l.source === 'object' ? l.source.id : l.source;
-      var t = typeof l.target === 'object' ? l.target.id : l.target;
-      return !(s === d.id || t === d.id);
-    });
-    link.classed('highlight', function(l){
-      var s = typeof l.source === 'object' ? l.source.id : l.source;
-      var t = typeof l.target === 'object' ? l.target.id : l.target;
-      return s === d.id || t === d.id;
-    });
-    showTooltip(d, event);
-  });
-  node.on('mousemove', function(event){ moveTooltip(event); });
-  node.on('mouseleave', function(){
-    node.classed('dim', false).classed('highlight', false);
-    link.classed('dim', false).classed('highlight', false);
-    hideTooltip();
-  });
-
-  // Click toggle pin, double-click navigate
-  node.on('click', function(event, d){
-    event.stopPropagation();
-    var sel = d3.select(this);
-    if (sel.classed('pinned')) {
-      sel.classed('pinned', false);
-      d.fx = null; d.fy = null;
-    } else {
-      sel.classed('pinned', true);
-      d.fx = d.x; d.fy = d.y;
-    }
-    simulation.alpha(0.3).restart();
-  });
-  node.on('dblclick', function(event, d){
-    event.stopPropagation();
-    window.location.href = d.url;
-  });
-
-  // Background dblclick reheat
-  svg.on('dblclick', function(){
-    simulation.alpha(0.7).restart();
-    setHudStatus('REHEAT');
-    setTimeout(function(){ setHudStatus('LIVE'); }, 1200);
-  });
-
-  function setHudStatus(_s){ /* HUD removed; no-op */ }
-
-  // Tick
-  simulation.on('tick', function(){
-    link.attr('x1', function(d){ return d.source.x; })
-        .attr('y1', function(d){ return d.source.y; })
-        .attr('x2', function(d){ return d.target.x; })
-        .attr('y2', function(d){ return d.target.y; });
-    node.attr('transform', function(d){ return 'translate(' + d.x + ',' + d.y + ')'; });
-  });
-
-  // Search
-  var searchInput = document.getElementById('bw-graph-search');
-  searchInput.addEventListener('input', function(){
-    var q = this.value.trim().toLowerCase();
-    node.classed('hit', function(d){ return q && d.label.toLowerCase().indexOf(q) !== -1; });
-    node.classed('dim', function(d){ return q && d.label.toLowerCase().indexOf(q) === -1; });
-    link.classed('dim', function(l){
-      if (!q) return false;
-      var s = typeof l.source === 'object' ? l.source.label : '';
-      var t = typeof l.target === 'object' ? l.target.label : '';
-      return s.toLowerCase().indexOf(q) === -1 && t.toLowerCase().indexOf(q) === -1;
-    });
-  });
-
-  // Mode (force/radial/grid) — still available via keyboard 1/2/3
-  var mode = 'force';
-  function applyMode(){
-    // Release any pins
-    data.nodes.forEach(function(n){ n.fx = null; n.fy = null; });
-    node.classed('pinned', false);
-    if (mode === 'force') {
-      simulation.force('r', null).force('gridX', null).force('gridY', null);
-      simulation.force('x', d3.forceX(width/2).strength(0.04));
-      simulation.force('y', d3.forceY(height/2).strength(0.04));
-    } else if (mode === 'radial') {
-      var cats = Object.keys(colors);
-      simulation.force('x', null).force('y', null);
-      simulation.force('r', d3.forceRadial(function(d){
-        var idx = cats.indexOf(d.category);
-        return 80 + (idx % 4) * 60;
-      }, width/2, height/2).strength(0.8));
-    } else if (mode === 'grid') {
-      var cats = Object.keys(colors).filter(function(c){
-        return data.nodes.some(function(n){ return n.category === c; });
-      });
-      var cols = Math.ceil(Math.sqrt(cats.length));
-      var cellW = width / (cols + 1);
-      var cellH = height / (cols + 1);
-      var catPos = {};
-      cats.forEach(function(c, i){
-        catPos[c] = { x: cellW * ((i % cols) + 1), y: cellH * (Math.floor(i / cols) + 1) };
-      });
-      simulation.force('r', null);
-      simulation.force('x', d3.forceX(function(d){ return (catPos[d.category] || {x: width/2}).x; }).strength(0.5));
-      simulation.force('y', d3.forceY(function(d){ return (catPos[d.category] || {y: height/2}).y; }).strength(0.5));
-    }
-    simulation.alpha(0.7).restart();
-  }
-
-  // Pause / Fit / Unpin — no UI, callable via keyboard shortcut
-  var paused = false;
-  function togglePause(){
-    paused = !paused;
-    if (paused) simulation.stop(); else simulation.restart();
-  }
-  function fitView(){
-    svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
-  }
-  function unpinAll(){
-    data.nodes.forEach(function(n){ n.fx = null; n.fy = null; });
-    node.classed('pinned', false);
-    simulation.alpha(0.5).restart();
-  }
-
-  // Legend clickable filter
-  var hidden = new Set();
-  document.querySelectorAll('#bw-graph-legend .bw-legend-item').forEach(function(el, idx){
-    var catId = Object.keys(catTitles)[idx];
-    el.addEventListener('click', function(){
-      if (hidden.has(catId)) hidden.delete(catId); else hidden.add(catId);
-      el.classList.toggle('disabled');
-      node.style('display', function(d){ return hidden.has(d.category) ? 'none' : null; });
-      link.style('display', function(l){
-        var s = typeof l.source === 'object' ? l.source.category : null;
-        var t = typeof l.target === 'object' ? l.target.category : null;
-        return (hidden.has(s) || hidden.has(t)) ? 'none' : null;
-      });
-    });
-  });
-
-  // Keyboard shortcuts
-  document.addEventListener('keydown', function(e){
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.key === ' ') { e.preventDefault(); togglePause(); }
-    else if (e.key === 'f' || e.key === 'F') { fitView(); }
-    else if (e.key === '+' || e.key === '=') { zoomStep(1.4); }
-    else if (e.key === '-' || e.key === '_') { zoomStep(0.7); }
-    else if (e.key === '0') { zoomReset(); }
-    else if (e.key === 'Escape') {
-      searchInput.value = '';
-      searchInput.dispatchEvent(new Event('input'));
-      unpinAll();
-    }
-  });
-
-  // Resize handling
-  window.addEventListener('resize', function(){
-    width = container.clientWidth;
-    height = container.clientHeight || 600;
-    svg.attr('viewBox', '0 0 ' + width + ' ' + height);
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
-    simulation.alpha(0.3).restart();
-  });
-})();
-</script>`;
+    const graphScript = buildGraphScript(graph, catColorMap, catTitleMap, { explainMode: false });
 
     const body = `
       <div class="bw-welcome-header">
@@ -1255,6 +1473,212 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         return;
       }
 
+      // === /api/explain — streaming LLM explanation endpoint ===
+      if (url === '/api/explain' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: any;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+          return;
+        }
+
+        const { type, nodeId, targetId } = body;
+        if (!type || !nodeId || (type !== 'node' && type !== 'edge')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request: need type (node|edge) and nodeId' }));
+          return;
+        }
+
+        const allArticles = await loadArticles();
+        const [nodeCat, nodeSlug] = nodeId.split('/');
+        const targetArticle = allArticles.find((a) => a.category === nodeCat && a.slug === nodeSlug);
+        if (!targetArticle) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `Article not found: ${nodeId}` }));
+          return;
+        }
+
+        const langLabel = config.language === 'ja' ? '日本語' : 'English';
+        const systemPrompt = `You are an expert on the "${config.projectName}" project wiki. Your role is to explain articles and their relationships to help users understand the project deeply.\n\nAnswer in ${langLabel}. Use Markdown. Be concise and insightful — focus on WHY things are connected and what the relationships reveal, not just summarizing content.`;
+
+        let userPrompt: string;
+
+        if (type === 'edge' && targetId) {
+          const [tCat, tSlug] = targetId.split('/');
+          const targetB = allArticles.find((a) => a.category === tCat && a.slug === tSlug);
+          if (!targetB) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Article not found: ${targetId}` }));
+            return;
+          }
+          userPrompt = `ARTICLE A: ${targetArticle.title}\n${targetArticle.body.slice(0, 50000)}\n\nARTICLE B: ${targetB.title}\n${targetB.body.slice(0, 50000)}\n\n---\n\nExplain the connection between "${targetArticle.title}" and "${targetB.title}":\n1. Why are these articles linked?\n2. What concepts or decisions do they share?\n3. How does understanding one inform the other?`;
+        } else {
+          // Node explain — gather neighbors
+          const graph = buildBacklinkGraph(allArticles);
+          const neighborIds = new Set<string>();
+          for (const link of graph.links) {
+            const s = typeof link.source === 'string' ? link.source : (link.source as any).id;
+            const t = typeof link.target === 'string' ? link.target : (link.target as any).id;
+            if (s === nodeId) neighborIds.add(t);
+            if (t === nodeId) neighborIds.add(s);
+          }
+          const neighbors = allArticles.filter((a) => neighborIds.has(`${a.category}/${a.slug}`));
+          const neighborSummaries = neighbors
+            .map((a) => `### ${a.title}\n${a.body.slice(0, 2000)}`)
+            .join('\n\n');
+
+          userPrompt = `TARGET ARTICLE: ${targetArticle.title}\n${targetArticle.body.slice(0, 50000)}\n\nCONNECTED ARTICLES (${neighbors.length} neighbors):\n${neighborSummaries}\n\n---\n\nExplain this article in context:\n1. What does "${targetArticle.title}" cover and why is it important to ${config.projectName}?\n2. How does it relate to its ${neighbors.length} connected articles?\n3. What key decisions or concepts does it capture?`;
+        }
+
+        // Cap total context
+        if (userPrompt.length > 100000) {
+          userPrompt = userPrompt.slice(0, 100000) + '\n\n[Context truncated]';
+        }
+
+        const explainModel = config.model.explain ?? config.model.query;
+        const provider = config.provider ?? 'claude-cli';
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        try {
+          const stream = callLLMStream({
+            model: explainModel,
+            system: systemPrompt,
+            user: userPrompt,
+            maxTokens: 4096,
+            provider,
+          });
+
+          for await (const chunk of stream) {
+            if (res.writableEnded) break;
+            res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+          }
+          if (!res.writableEnded) {
+            res.write('event: done\ndata: {}\n\n');
+            res.end();
+          }
+        } catch (err: any) {
+          if (!res.writableEnded) {
+            res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
+            res.end();
+          }
+        }
+        return;
+      }
+
+      // === /api/explain/project — scan project and return JSON ===
+      if (url === '/api/explain/project' && req.method === 'GET') {
+        if (!cachedExplainData) {
+          cachedExplainData = await scanProject(root, config.projectName);
+        }
+        const json = JSON.stringify(cachedExplainData);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        });
+        res.end(json);
+        return;
+      }
+
+      // === /api/explain/file — file detail JSON ===
+      if (url === '/api/explain/file' && req.method === 'GET') {
+        if (!cachedExplainData) {
+          cachedExplainData = await scanProject(root, config.projectName);
+        }
+        const queryString = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?') + 1) : '';
+        const fp = new URLSearchParams(queryString).get('path');
+        if (!fp) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing path parameter' }));
+          return;
+        }
+        const detail = getFileDetail(fp, root, cachedExplainData);
+        if (!detail) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'File not found' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+        res.end(JSON.stringify(detail));
+        return;
+      }
+
+      // === /api/explain/analyze — LLM file analysis (streaming) ===
+      if (url === '/api/explain/analyze' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let body: any;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+
+        const filePath = body.path;
+        if (!filePath) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing path' }));
+          return;
+        }
+
+        const absFilePath = join(root, filePath);
+        if (!existsSync(absFilePath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'File not found' }));
+          return;
+        }
+
+        const fileContent = readFileSync(absFilePath, 'utf-8').slice(0, 50000);
+        const langLabel = config.language === 'ja' ? '日本語' : 'English';
+        const analyzeSystem = `You are an expert code reviewer analyzing a file in the "${config.projectName}" project. Provide actionable insights.\n\nAnswer in ${langLabel}. Use Markdown.`;
+        const analyzeUser = `FILE: ${filePath}\n\n\`\`\`\n${fileContent}\n\`\`\`\n\n---\n\nAnalyze this file:\n1. What does this file do and what is its role in the project?\n2. Code quality: any issues, smells, or improvement opportunities?\n3. Are there potential redundancies or dead code?\n4. Security or performance concerns?\n5. Brief summary and priority recommendations.\n\nBe concise and actionable.`;
+
+        const explainModel = config.model.explain ?? config.model.query;
+        const provider = config.provider ?? 'claude-cli';
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+
+        try {
+          const stream = callLLMStream({
+            model: explainModel,
+            system: analyzeSystem,
+            user: analyzeUser,
+            maxTokens: 4096,
+            provider,
+          });
+          for await (const chunk of stream) {
+            if (res.writableEnded) break;
+            res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+          }
+          if (!res.writableEnded) {
+            res.write('event: done\ndata: {}\n\n');
+            res.end();
+          }
+        } catch (err: any) {
+          if (!res.writableEnded) {
+            res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
+            res.end();
+          }
+        }
+        return;
+      }
+
       const rawUrl = req.url ?? '/';
       const cacheKey = rawUrl;
       const cached = htmlCache.get(cacheKey);
@@ -1294,6 +1718,10 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       let html = '';
       if (url === '/' || url === '/index.html') {
         html = renderMainPage(articles, manifest);
+      } else if (url === '/explain') {
+        html = explainPageHtml(config.projectName);
+      } else if (url === '/graph') {
+        html = renderGraphPage(articles, manifest);
       } else if (url === '/all') {
         html = renderAllPage(articles, manifest);
       } else if (url === '/search') {
