@@ -10,6 +10,7 @@ import { statusCommand } from './commands/status.js';
 import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
+import { motifsCommand } from './commands/motifs.js';
 
 const program = new Command();
 
@@ -74,6 +75,14 @@ program
   .option('-d, --debounce <ms>', 'Debounce window in milliseconds', '20000')
   .option('--no-serve', 'Only watch, do not start HTTP server')
   .action(watchCommand);
+
+program
+  .command('motifs')
+  .description('Generate AI-designed SVG sigils for every source file (writes to .brandwiki/.motif-cache/)')
+  .option('-l, --limit <n>', 'Only process the first N files')
+  .option('-c, --concurrency <n>', 'Parallel API calls', '3')
+  .option('-f, --force', 'Regenerate even if cached')
+  .action(async (opts) => { await motifsCommand(opts); });
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);

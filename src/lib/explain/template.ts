@@ -551,6 +551,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #e6edf3; font-f
       '<div class="bw-gate-stat"><div class="bw-gate-stat-value">' + fmtBytes(data.stats.totalSizeBytes) + '</div><div class="bw-gate-stat-label">Size</div></div>' +
       '<div class="bw-gate-stat"><div class="bw-gate-stat-value">' + data.stats.healthScore + '%</div><div class="bw-gate-stat-label">Health</div></div>';
 
+    // Deep-link: /explain?file=<path> auto-skips the gate and opens that file's panel.
+    var urlFileParam = null;
+    try {
+      urlFileParam = new URLSearchParams(window.location.search).get('file');
+    } catch (e) {}
+
     enterBtn.addEventListener('click', function() {
       gate.classList.add('opening');
       setTimeout(function() {
@@ -559,8 +565,17 @@ html, body { width: 100%; height: 100%; overflow: hidden; color: #e6edf3; font-f
         renderWorld(data);
         S.fxId = requestAnimationFrame(drawFx);
         renderLegend(data);
+        // After the world is built, honor the deep-link by opening the requested file.
+        if (urlFileParam) {
+          setTimeout(function() { showFileDetail(urlFileParam); }, 120);
+        }
       }, 1300);
     });
+
+    // If we arrived with ?file=..., skip the gate — the user wants the file, not a ceremony.
+    if (urlFileParam) {
+      setTimeout(function() { try { enterBtn.click(); } catch (e) {} }, 400);
+    }
   }).catch(function(err) {
     gateStats.innerHTML = '<div class="bw-gate-stat"><div class="bw-gate-stat-value" style="color:#f85149">Error</div><div class="bw-gate-stat-label">' + escH(err.message) + '</div></div>';
   });

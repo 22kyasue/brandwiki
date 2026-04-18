@@ -206,18 +206,24 @@ function countLines(filePath: string): number {
 // === Main scanner ===
 
 export async function scanProject(projectRoot: string, projectName: string): Promise<ExplainProjectData> {
-  // 1. Discover files
-  const rawFiles = await fg('**/*', {
-    cwd: projectRoot,
-    onlyFiles: true,
-    dot: false,
-    ignore: [
-      'node_modules/**', '.git/**', 'dist/**', 'build/**', '.brandwiki/**',
-      'coverage/**', '.next/**', '.nuxt/**', '__pycache__/**',
-      '*.lock', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
-      '**/*.map', '**/*.min.js', '**/*.min.css',
-    ],
-  });
+  // 1. Discover code files only. Ignore patterns need `**/` prefix to catch
+  // nested node_modules (scraper/node_modules/...), not just root-level.
+  const rawFiles = await fg(
+    ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.mjs', '**/*.cjs', '**/*.vue', '**/*.svelte'],
+    {
+      cwd: projectRoot,
+      onlyFiles: true,
+      dot: false,
+      ignore: [
+        '**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**',
+        '**/.brandwiki/**', '**/coverage/**', '**/.next/**', '**/.nuxt/**',
+        '**/__pycache__/**', '**/out/**', '**/.turbo/**', '**/.cache/**',
+        '**/*.lock', '**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml',
+        '**/*.map', '**/*.min.js', '**/*.min.css', '**/*.d.ts',
+        '**/scraped/**', '**/scraped-data/**', '**/snapshots/**',
+      ],
+    },
+  );
 
   // 2. Collect file metadata
   const fileEntries: ExplainFileEntry[] = [];
