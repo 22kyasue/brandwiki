@@ -163,6 +163,40 @@ function formatReport(
   return md;
 }
 
+function formatWikiArticle(
+  competitor: Competitor,
+  body: string,
+  config: BrandwikiConfig
+): string {
+  const tags = competitor.tags ?? ['competitor'];
+  const today = todayStamp();
+  const titleSuffix = config.language === 'ja' ? '徹底分析' : 'Competitive analysis';
+
+  const front = [
+    '---',
+    `title: ${competitor.name} ${titleSuffix}`,
+    `category: ${competitor.category ?? config.research?.targetCategory ?? 'bb-competitive'}`,
+    'status: draft',
+    'confidence: medium',
+    `updated: ${today}`,
+    `sources: [research${tags.length > 0 ? ', ' + tags.join(', ') : ''}]`,
+    '---',
+    '',
+  ].join('\n');
+
+  let md = front;
+  md += `# ${competitor.name} ${titleSuffix}\n\n`;
+  if (competitor.description) md += `> ${competitor.description}\n\n`;
+  if ((competitor.urls ?? []).length > 0) {
+    md += `**参照URL**:\n`;
+    for (const u of competitor.urls!) md += `- ${u}\n`;
+    md += '\n';
+  }
+  md += `<!-- 本記事は \`brandwiki research\` により ${today} に自動生成されました。履歴は raw/competitors/ に保存されます。 -->\n\n`;
+  md += body.trim() + '\n';
+  return md;
+}
+
 export async function researchCommand(options: ResearchOptions): Promise<void> {
   const root = findProjectRoot();
   const config = loadConfig(root);
@@ -219,6 +253,8 @@ export async function researchCommand(options: ResearchOptions): Promise<void> {
     config.model.research ??
     config.model.compile ??
     'claude-sonnet-4-6';
+  const defaultCat = config.research?.targetCategory ?? 'bb-competitive';
+  const wikiBaseDir = join(bwDir, 'wiki');
 
   let researched = 0;
   let skipped = 0;
@@ -272,8 +308,15 @@ export async function researchCommand(options: ResearchOptions): Promise<void> {
 
       const md = formatReport(competitor, body, config, since);
       writeFileSync(destPath, md, 'utf-8');
+
+      const catId = competitor.category ?? defaultCat;
+      const wikiCatDir = join(wikiBaseDir, catId);
+      mkdirSync(wikiCatDir, { recursive: true });
+      const wikiPath = join(wikiCatDir, `${slug}-analysis.md`);
+      writeFileSync(wikiPath, formatWikiArticle(competitor, body, config), 'utf-8');
+
       researched++;
-      console.log(pc.green(`  ✓ ${competitor.name}`) + pc.dim(` (${body.length} chars → ${destPath})`));
+      console.log(pc.green(`  ✓ ${competitor.name}`) + pc.dim(` → raw/competitors/${stamp}-${slug}.md, wiki/${catId}/${slug}-analysis.md`));
     } catch (err: any) {
       console.log(pc.red(`  ✗ ${competitor.name}: ${err.message}`));
       failed++;
