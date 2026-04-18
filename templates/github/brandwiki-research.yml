@@ -1,0 +1,101 @@
+# .github/workflows/brandwiki-research.yml
+#
+# Daily autonomous competitor research for brandwiki.
+#
+# Setup:
+#   1. Copy this file to .github/workflows/brandwiki-research.yml
+#   2. Add repo secret ANTHROPIC_API_KEY
+#   3. Ensure .brandwiki/config.json has:
+#        - "provider": "api"
+#        - "research": { "competitors": [ ... ] }
+#   4. (Optional) adjust the cron schedule below
+#
+# What it does:
+#   - Runs `brandwiki research --compile` using the Anthropic API
+#   - Commits any new files in .brandwiki/raw/competitors/ and .brandwiki/wiki/
+#   - Opens a PR so the diff can be reviewed before merging
+#
+name: brandwiki research
+
+on:
+  schedule:
+    # Daily at 21:00 UTC (06:00 JST next day). UTC is what GitHub uses.
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      competitor:
+        description: "Research a specific competitor (leave empty for all)"
+        required: false
+        type: string
+      force:
+        description: "Overwrite today's report if it exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install brandwiki
+        # brandwiki-engine is not yet published to npm — install from GitHub.
+        # Once published, switch to: npm install -g brandwiki-engine@latest
+        run: |
+          git clone --depth 1 https://github.com/22kyasue/brandwiki.git /tmp/brandwiki
+          cd /tmp/brandwiki
+          npm ci --omit=dev || npm install --omit=dev
+          npm run build
+          npm link
+          brandwiki --version
+
+      - name: Run brandwiki research
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BRANDWIKI_PROVIDER: api
+        run: |
+          ARGS="--compile"
+          if [ -n "${{ inputs.competitor }}" ]; then
+            ARGS="$ARGS --competitor \"${{ inputs.competitor }}\""
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          eval "brandwiki research $ARGS"
+
+      - name: Detect changes
+        id: diff
+        run: |
+          git add .brandwiki/raw/competitors .brandwiki/wiki .brandwiki/manifest.json || true
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore(brandwiki): daily competitor research"
+          branch: brandwiki/research-${{ github.run_id }}
+          delete-branch: true
+          title: "brandwiki: daily competitor research"
+          body: |
+            Automated competitor research run by `brandwiki research --compile`.
+
+            Review `.brandwiki/raw/competitors/` and the updated `.brandwiki/wiki/` articles before merging.
+          labels: |
+            brandwiki
+            automated

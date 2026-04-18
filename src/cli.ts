@@ -10,6 +10,7 @@ import { statusCommand } from './commands/status.js';
 import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
+import { researchCommand } from './commands/research.js';
 
 const program = new Command();
 
@@ -74,6 +75,17 @@ program
   .option('-d, --debounce <ms>', 'Debounce window in milliseconds', '20000')
   .option('--no-serve', 'Only watch, do not start HTTP server')
   .action(watchCommand);
+
+program
+  .command('research')
+  .description('Autonomous competitor research: writes dated briefs to raw/competitors/')
+  .option('-c, --competitor <name>', 'Research only this competitor (by name)')
+  .option('-s, --since <date>', 'Prioritize news since this date (YYYY-MM-DD)')
+  .option('--compile', 'Run `brandwiki compile` automatically after research')
+  .option('--dry-run', 'List competitors that would be researched, no LLM calls')
+  .option('-f, --force', 'Overwrite today\'s report if it already exists')
+  .option('-v, --verbose', 'Show skipped items')
+  .action(researchCommand);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);

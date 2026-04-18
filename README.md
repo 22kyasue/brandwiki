@@ -70,7 +70,54 @@ brandwiki lint
 brandwiki search <query>
 brandwiki query "<question>"
 brandwiki status
+brandwiki research [--competitor <name>] [--since <date>] [--compile] [--dry-run] [--force]
 ```
+
+---
+
+## Autonomous Research
+
+`brandwiki research` turns the wiki into a living competitive-intelligence system. It reads `config.research.competitors`, calls the LLM (with web search enabled on the API provider), and writes a dated brief per competitor to `raw/competitors/YYYY-MM-DD-<slug>.md`. The next `compile` folds them into the wiki.
+
+Config example:
+
+```jsonc
+{
+  "research": {
+    "targetCategory": "bb-competitive",
+    "cadenceDays": 1,
+    "competitors": [
+      {
+        "name": "Acme Booking",
+        "description": "Primary competitor — SaaS booking platform",
+        "urls": ["https://acme.example.com", "https://twitter.com/acme"],
+        "focus": ["pricing", "feature-launches", "japan-market"],
+        "tags": ["competitor", "saas"]
+      }
+    ]
+  },
+  "model": {
+    "research": "claude-sonnet-4-6"
+  }
+}
+```
+
+Run locally:
+
+```bash
+brandwiki research --compile               # all competitors, then compile
+brandwiki research --competitor "Acme Booking"
+brandwiki research --since 2026-04-01 --compile
+```
+
+Run daily via GitHub Actions — copy the template workflow:
+
+```bash
+cp node_modules/brandwiki-engine/templates/github/brandwiki-research.yml \
+   .github/workflows/brandwiki-research.yml
+```
+
+Then add `ANTHROPIC_API_KEY` as a repo secret and set `"provider": "api"` in `config.json`. The workflow opens a PR with the daily diff so each update is reviewable before merging.
 
 ---
 

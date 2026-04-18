@@ -16,6 +16,23 @@ export interface ExternalSource {
   tags?: string[];
 }
 
+export interface Competitor {
+  name: string;
+  description?: string;
+  urls?: string[];
+  category?: string;
+  tags?: string[];
+  focus?: string[];
+}
+
+export interface ResearchConfig {
+  competitors?: Competitor[];
+  targetCategory?: string;
+  cadenceDays?: number;
+  maxBytesPerCompetitor?: number;
+  promptOverride?: string;
+}
+
 export interface BrandwikiConfig {
   projectName: string;
   language: 'ja' | 'en';
@@ -26,10 +43,12 @@ export interface BrandwikiConfig {
     compile: string;
     lint: string;
     query: string;
+    research?: string;
   };
   sources: Array<{ path: string; type: string; glob?: string }>;
   ingestPaths?: IngestRule[];
   externalSources?: ExternalSource[];
+  research?: ResearchConfig;
   watch?: {
     debounceMs?: number;
     autoCompile?: boolean;
