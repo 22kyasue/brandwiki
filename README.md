@@ -71,7 +71,27 @@ brandwiki search <query>
 brandwiki query "<question>"
 brandwiki status
 brandwiki research [--competitor <name>] [--since <date>] [--compile] [--dry-run] [--force]
+brandwiki export-context [--format plain|octogent] [--out <path>] [--categories <ids>] [--max-chars <n>]
 ```
+
+### export-context
+
+Flatten the compiled wiki into a single Markdown bundle that external agent frameworks (e.g. [octogent](https://github.com/hesamsheikh/octogent) tentacles, MCP tools, custom pipelines) can load as the authoritative project context.
+
+```bash
+# default plain bundle → .brandwiki/outputs/context-bundle.md
+brandwiki export-context
+
+# scoped to selected categories
+brandwiki export-context --categories 01-brand,03-architecture
+
+# write a CONTEXT.md directly into an octogent tentacle folder
+brandwiki export-context \
+  --format octogent \
+  --out ../my-project/.octogent/tentacles/frontend/
+```
+
+The file is regenerated on every run — treat it as a build artifact, not a hand-edited doc.
 
 ---
 

@@ -12,6 +12,7 @@ import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
 import { motifsCommand } from './commands/motifs.js';
+import { exportContextCommand } from './commands/export-context.js';
 
 const program = new Command();
 
@@ -95,6 +96,15 @@ program
   .option('-c, --concurrency <n>', 'Parallel API calls', '3')
   .option('-f, --force', 'Regenerate even if cached')
   .action(async (opts) => { await motifsCommand(opts); });
+
+program
+  .command('export-context')
+  .description('Export the compiled wiki as a single context bundle for external agents (e.g. octogent tentacles)')
+  .option('-o, --out <path>', 'Output file (plain) or tentacle directory (octogent). Defaults to .brandwiki/outputs/context-bundle.md for plain.')
+  .option('-c, --categories <ids>', 'Comma-separated category ids to include (e.g. 01-brand,03-architecture)')
+  .option('-f, --format <fmt>', 'Output format: plain | octogent', 'plain')
+  .option('--max-chars <n>', 'Maximum total characters to emit (articles over budget are listed as truncated)')
+  .action(exportContextCommand);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);
