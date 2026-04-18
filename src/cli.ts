@@ -11,6 +11,7 @@ import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
+import { motifsCommand } from './commands/motifs.js';
 
 const program = new Command();
 
@@ -86,6 +87,14 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('motifs')
+  .description('Generate AI-designed SVG sigils for every source file (writes to .brandwiki/.motif-cache/)')
+  .option('-l, --limit <n>', 'Only process the first N files')
+  .option('-c, --concurrency <n>', 'Parallel API calls', '3')
+  .option('-f, --force', 'Regenerate even if cached')
+  .action(async (opts) => { await motifsCommand(opts); });
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);

@@ -4,3 +4,10 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# Per-project brandwiki data — lives in the consuming project, not in the tool repo
+config.json
+manifest.json
+raw/
+wiki/
+.motif-cache/

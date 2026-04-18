@@ -33,6 +33,25 @@ export interface ResearchConfig {
   promptOverride?: string;
 }
 
+export interface Graph3DTheme {
+  preset?: 'tokyo-night' | 'cosmos' | 'forest' | 'ocean' | 'minimal' | 'custom';
+  background?: string;
+  backgroundGradient?: [string, string];
+  worldLabel?: string;
+  nodeLabel?: string;
+  ambientColor?: string;
+  accentColor?: string;
+  particleColor?: string;
+  glowIntensity?: number;
+  starfield?: boolean;
+  fog?: { color: string; near: number; far: number };
+  mode?: 'articles' | 'files';
+  sourceRoot?: string;
+  include?: string[];
+  exclude?: string[];
+  healthOverrides?: Record<string, 'green' | 'yellow' | 'gold' | 'red'>;
+}
+
 export interface BrandwikiConfig {
   projectName: string;
   language: 'ja' | 'en';
@@ -44,6 +63,7 @@ export interface BrandwikiConfig {
     lint: string;
     query: string;
     research?: string;
+    explain?: string;
   };
   sources: Array<{ path: string; type: string; glob?: string }>;
   ingestPaths?: IngestRule[];
@@ -57,6 +77,7 @@ export interface BrandwikiConfig {
     webhookUrl?: string;
     events?: ('compile' | 'fetch' | 'lint')[];
   };
+  graph3d?: Graph3DTheme;
 }
 
 export function findProjectRoot(startDir: string = process.cwd()): string {
