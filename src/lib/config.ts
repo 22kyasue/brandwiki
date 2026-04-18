@@ -7,6 +7,15 @@ export interface IngestRule {
   maxSize?: number;
 }
 
+export interface ExternalSource {
+  type: 'wikipedia' | 'url';
+  articles?: string[];
+  urls?: string[];
+  language?: string;
+  category?: string;
+  tags?: string[];
+}
+
 export interface BrandwikiConfig {
   projectName: string;
   language: 'ja' | 'en';
@@ -20,9 +29,14 @@ export interface BrandwikiConfig {
   };
   sources: Array<{ path: string; type: string; glob?: string }>;
   ingestPaths?: IngestRule[];
+  externalSources?: ExternalSource[];
   watch?: {
     debounceMs?: number;
     autoCompile?: boolean;
+  };
+  notifications?: {
+    webhookUrl?: string;
+    events?: ('compile' | 'fetch' | 'lint')[];
   };
 }
 

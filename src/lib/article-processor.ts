@@ -1,5 +1,5 @@
 import { marked } from 'marked';
-import { escapeHtml } from './site-template.js';
+import { escapeHtml, t, type Lang } from './site-template.js';
 
 export interface ArticleIndexEntry {
   category: string;
@@ -161,22 +161,29 @@ export function buildInfobox(article: {
   category: string;
   status: string;
   confidence: string;
+  confidenceDetail?: string;
   updated: string;
   sources: string[];
   words: number;
-}, categoryTitle: string): string {
+}, categoryTitle: string, lang: Lang = 'ja'): string {
   const badge = (type: string, val: string) =>
     `<span class="bw-badge ${type}-${val}">${escapeHtml(val)}</span>`;
+  const caption = lang === 'ja'
+    ? `${escapeHtml(categoryTitle)}の記事`
+    : `${escapeHtml(categoryTitle)} article`;
+  const confidenceCell = article.confidenceDetail
+    ? `${badge('conf', article.confidence)}<div style="font-size: 11px; color: #72777d; margin-top: 2px;">(${escapeHtml(article.confidenceDetail)})</div>`
+    : badge('conf', article.confidence);
   return `<aside class="bw-infobox">
     <div class="bw-infobox-title">${escapeHtml(article.title)}</div>
-    <div class="bw-infobox-caption">${escapeHtml(categoryTitle)}の記事</div>
+    <div class="bw-infobox-caption">${caption}</div>
     <table>
-      <tr><th>カテゴリ</th><td><a href="/category/${article.category}">${escapeHtml(categoryTitle)}</a></td></tr>
-      <tr><th>状態</th><td>${badge('status', article.status)}</td></tr>
-      <tr><th>信頼度</th><td>${badge('conf', article.confidence)}</td></tr>
-      <tr><th>更新</th><td>${escapeHtml(article.updated)}</td></tr>
-      <tr><th>語数</th><td>${article.words.toLocaleString()}</td></tr>
-      <tr><th>ソース数</th><td>${article.sources.length}</td></tr>
+      <tr><th>${t(lang, 'category')}</th><td><a href="/category/${article.category}">${escapeHtml(categoryTitle)}</a></td></tr>
+      <tr><th>${t(lang, 'status')}</th><td>${badge('status', article.status)}</td></tr>
+      <tr><th>${t(lang, 'confidence')}</th><td>${confidenceCell}</td></tr>
+      <tr><th>${t(lang, 'updated')}</th><td>${escapeHtml(article.updated)}</td></tr>
+      <tr><th>${t(lang, 'words')}</th><td>${article.words.toLocaleString()}</td></tr>
+      <tr><th>${t(lang, 'sources')}</th><td>${article.sources.length}</td></tr>
     </table>
   </aside>`;
 }

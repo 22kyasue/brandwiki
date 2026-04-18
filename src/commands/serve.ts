@@ -1,12 +1,13 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, relative, dirname } from 'node:path';
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fg from 'fast-glob';
 import matter from 'gray-matter';
 import pc from 'picocolors';
 import { findProjectRoot, loadConfig, brandwikiDir } from '../lib/config.js';
 import { loadManifest, type Manifest } from '../lib/manifest.js';
+import { runLint, type LintResult } from './lint.js';
 import {
   htmlShell,
   escapeHtml,
@@ -23,7 +24,6 @@ import {
   buildCategoriesFooter,
   type ArticleIndexEntry,
 } from '../lib/article-processor.js';
-
 interface ServeOptions {
   port?: string;
   noLiveReload?: boolean;
@@ -36,6 +36,16 @@ let cachedArticles: any[] | null = null;
 let cachedManifestMtime = 0;
 const htmlCache = new Map<string, string>();
 
+let serverMode: 'serve' | 'watch' = 'serve';
+let serverStartedAt = Date.now();
+let lastBroadcastAt: number | null = null;
+let lastBroadcastReason: string | null = null;
+let broadcastCount = 0;
+
+export function setServerMode(mode: 'serve' | 'watch'): void {
+  serverMode = mode;
+}
+
 export function invalidateCache(): void {
   cachedArticles = null;
   htmlCache.clear();
@@ -43,6 +53,9 @@ export function invalidateCache(): void {
 
 export function broadcastReload(): void {
   invalidateCache();
+  lastBroadcastAt = Date.now();
+  lastBroadcastReason = 'reload';
+  broadcastCount++;
   const payload = `event: reload\ndata: ${Date.now()}\n\n`;
   for (const client of sseClients) {
     try {
@@ -59,12 +72,27 @@ interface Article {
   title: string;
   status: string;
   confidence: string;
+  confidenceDetail: string;
   updated: string;
   updatedAtIso: string;
   sources: string[];
   body: string;
   words: number;
   path: string;
+}
+
+function calculateConfidence(
+  sourceCount: number,
+  wordCount: number,
+  backlinkCount: number
+): { level: string; detail: string } {
+  const scoreSource = sourceCount === 0 ? 1 : sourceCount <= 2 ? 2 : 3;
+  const scoreWords = wordCount < 200 ? 1 : wordCount <= 800 ? 2 : 3;
+  const scoreRefs = backlinkCount === 0 ? 1 : backlinkCount <= 2 ? 2 : 3;
+  const avg = (scoreSource + scoreWords + scoreRefs) / 3;
+  const level = avg >= 2.5 ? 'high' : avg >= 1.5 ? 'medium' : 'low';
+  const detail = `sources: ${sourceCount}, words: ${wordCount}, refs: ${backlinkCount}`;
+  return { level, detail };
 }
 
 export async function startServer(options: ServeOptions): Promise<void> {
@@ -196,6 +224,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         title: toStr(parsed.data.title) || slug,
         status: toStr(parsed.data.status) || 'draft',
         confidence: toStr(parsed.data.confidence) || 'medium',
+        confidenceDetail: '',
         updated: formatJST(updatedAtIso) || toStr(parsed.data.updated),
         updatedAtIso,
         sources: toStrArray(parsed.data.sources),
@@ -204,6 +233,39 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         path: file,
       });
     }
+
+    // Auto-calculate confidence scores based on metadata
+    const backlinkCounts = new Map<string, number>();
+    for (const a of articles) {
+      backlinkCounts.set(`${a.category}/${a.slug}`, 0);
+    }
+    for (const a of articles) {
+      const linkMatches = a.body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g);
+      const seen = new Set<string>();
+      for (const m of linkMatches) {
+        const target = m[1].trim().toLowerCase();
+        const found = articles.find(
+          (x) =>
+            x.title.toLowerCase() === target ||
+            x.slug.toLowerCase() === target ||
+            x.title.toLowerCase().includes(target)
+        );
+        if (!found) continue;
+        const foundKey = `${found.category}/${found.slug}`;
+        if (foundKey === `${a.category}/${a.slug}`) continue;
+        if (seen.has(foundKey)) continue;
+        seen.add(foundKey);
+        backlinkCounts.set(foundKey, (backlinkCounts.get(foundKey) ?? 0) + 1);
+      }
+    }
+    for (const a of articles) {
+      const key = `${a.category}/${a.slug}`;
+      const refs = backlinkCounts.get(key) ?? 0;
+      const calc = calculateConfidence(a.sources.length, a.words, refs);
+      a.confidence = calc.level;
+      a.confidenceDetail = calc.detail;
+    }
+
     cachedArticles = articles;
     return articles;
   }
@@ -282,6 +344,26 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     ${sectionClose}`;
   }
 
+  function detectRelationshipType(body: string, matchIndex: number): string {
+    const contextRadius = 100;
+    const start = Math.max(0, matchIndex - contextRadius);
+    const end = Math.min(body.length, matchIndex + contextRadius);
+    const context = body.slice(start, end).toLowerCase();
+    const competitorKeywords = ['競合', 'competitor', 'rival'];
+    const partnerKeywords = ['提携', 'partner', '協力', 'alliance'];
+    const investmentKeywords = ['出資', '投資', '子会社', 'subsidiary', 'parent'];
+    for (const kw of competitorKeywords) {
+      if (context.includes(kw)) return 'competitor';
+    }
+    for (const kw of partnerKeywords) {
+      if (context.includes(kw)) return 'partner';
+    }
+    for (const kw of investmentKeywords) {
+      if (context.includes(kw)) return 'investment';
+    }
+    return 'reference';
+  }
+
   function buildBacklinkGraph(articles: Article[]): { nodes: any[]; links: any[] } {
     const idOf = (a: Article) => `${a.category}/${a.slug}`;
     const nodeMap = new Map<string, any>();
@@ -294,7 +376,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         degree: 0,
       });
     }
-    const links: Array<{ source: string; target: string }> = [];
+    const links: Array<{ source: string; target: string; type: string }> = [];
     const seen = new Set<string>();
     for (const a of articles) {
       const sourceId = idOf(a);
@@ -311,7 +393,8 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         const key = `${sourceId}->${idOf(found)}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        links.push({ source: sourceId, target: idOf(found) });
+        const relType = detectRelationshipType(a.body, m.index ?? 0);
+        links.push({ source: sourceId, target: idOf(found), type: relType });
         nodeMap.get(sourceId)!.degree++;
         nodeMap.get(idOf(found))!.degree++;
       }
@@ -460,6 +543,13 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
           <span style="color: #a2a9b1;">|</span>
           ${graphLegend}
         </div>
+        <div class="bw-edge-legend">
+          <span class="bw-edge-legend-label">Edge types:</span>
+          <span class="bw-edge-legend-item"><span class="bw-edge-line" style="background:#a0aac8;"></span> reference</span>
+          <span class="bw-edge-legend-item"><span class="bw-edge-line" style="background:#ef4444;"></span> competitor</span>
+          <span class="bw-edge-legend-item"><span class="bw-edge-line" style="background:#22c55e;"></span> partner</span>
+          <span class="bw-edge-legend-item"><span class="bw-edge-line" style="background:#f59e0b;"></span> investment</span>
+        </div>
         <div class="bw-graph-container" id="bw-graph-container">
           <svg id="bw-graph-svg"></svg>
           <div class="bw-graph-mini-search">
@@ -525,7 +615,8 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
 
   // Links (render below nodes)
   var link = g.append('g').attr('class', 'links').selectAll('line')
-    .data(data.links).enter().append('line').attr('class', 'link');
+    .data(data.links).enter().append('line').attr('class', 'link')
+    .attr('data-type', function(d){ return d.type || 'reference'; });
 
   // Mark top-N by degree as permanent anchors (labels always visible)
   var topN = Math.min(7, Math.ceil(data.nodes.length * 0.35));
@@ -807,6 +898,26 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
 })();
 </script>`;
 
+    // Link suggestions banner
+    const suggestionsPath = join(bwDir, 'outputs', 'link-suggestions.json');
+    let suggestionsCard = '';
+    if (existsSync(suggestionsPath)) {
+      try {
+        const suggestionsData = JSON.parse(readFileSync(suggestionsPath, 'utf-8'));
+        if (Array.isArray(suggestionsData) && suggestionsData.length > 0) {
+          suggestionsCard = `<div class="bw-dash-card full-width">
+            <div class="bw-dash-card-header yellow">Link suggestions</div>
+            <div class="bw-dash-card-body">
+              <p>${suggestionsData.length} link suggestion${suggestionsData.length === 1 ? '' : 's'} available</p>
+              <a href="/suggestions" style="color: #3366cc; text-decoration: none; font-weight: 500;">View suggestions &rarr;</a>
+            </div>
+          </div>`;
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+
     const body = `
       <div class="bw-welcome-header">
         <div class="bw-welcome-title">Welcome to <em>${escapeHtml(config.projectName)}</em> Wiki</div>
@@ -814,6 +925,7 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         <div class="bw-welcome-stats">${articles.length} articles across ${config.categories.length} categories · ${totalWords.toLocaleString()} words</div>
       </div>
       <div class="bw-dashboard">
+        ${suggestionsCard}
         ${browseCard}
         ${featuredCard}
         ${recentCard}
@@ -970,6 +1082,11 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     const cat = config.categories.find((c) => c.id === catId);
     const catTitle = cat?.title ?? catId;
 
+    // Brandbook articles → consulting report style
+    if (catId.startsWith('bb-')) {
+      return renderBrandbookReport(article, catId, catTitle, articles, manifest);
+    }
+
     const processed = processArticleBody({
       body: article.body,
       articleIndex: buildIndex(articles),
@@ -989,19 +1106,44 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
 
     const layoutClass =
       'bw-article-layout' + (!infobox ? ' no-infobox' : '');
+    const escapedMarkdown = escapeHtml(article.body);
     const body = `
       <div class="${layoutClass}">
         ${combinedSidebar}
         <div class="bw-article-main">
+          <button class="bw-edit-btn" id="bw-edit-btn" data-category="${escapeHtml(catId)}" data-slug="${escapeHtml(slug)}">Edit</button>
           <div class="bw-breadcrumb">
             <a href="/">Main Page</a> ›
             <a href="/category/${catId}">${escapeHtml(catTitle)}</a>
           </div>
           <h1 class="bw-title">${escapeHtml(article.title)}</h1>
           <div class="bw-subtitle">From ${escapeHtml(config.projectName)} Brand Wiki</div>
-          <div class="bw-article">${processed.html}</div>
+          <div class="bw-article" id="bw-article-view">${processed.html}</div>
+          <div id="bw-editor-container" style="display:none;">
+            <div class="bw-editor-toolbar">
+              <button type="button" id="bw-tb-bold" title="Bold">B</button>
+              <button type="button" id="bw-tb-link" title="Wiki Link">[[Link]]</button>
+              <button type="button" id="bw-tb-heading" title="Heading"># H</button>
+            </div>
+            <textarea class="bw-editor-textarea" id="bw-editor-textarea">${escapedMarkdown}</textarea>
+            <div class="bw-edit-actions">
+              <button type="button" class="bw-save-btn" id="bw-save-btn">Save</button>
+              <button type="button" class="bw-cancel-btn" id="bw-cancel-btn">Cancel</button>
+            </div>
+          </div>
           ${references}
           ${catFooter}
+          <div class="bw-comments" id="bw-comments" data-category="${escapeHtml(catId)}" data-slug="${escapeHtml(slug)}">
+            <div class="bw-comments-header">Notes &amp; Comments <span id="bw-comment-count"></span></div>
+            <div id="bw-comments-list"></div>
+            <div class="bw-comment-form">
+              <textarea id="bw-comment-text" placeholder="Add a note or comment..."></textarea>
+              <div class="bw-comment-form-row">
+                <input type="text" id="bw-comment-author" placeholder="Name (optional)">
+                <button type="submit" id="bw-comment-submit">Add Note</button>
+              </div>
+            </div>
+          </div>
         </div>
         <aside class="bw-article-infobox-col">${infobox}</aside>
       </div>
@@ -1047,10 +1189,138 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
       body,
       lastCompile: manifest.lastCompile,
       extraHead: liveReloadScript,
-      extraBodyEnd: scrollSpyScript,
+      extraBodyEnd: scrollSpyScript + buildEditorScript() + buildCommentsScript(),
       needsMermaid: processed.html.includes('class="mermaid"'),
       needsHighlight: processed.html.includes('<code class="language-'),
     });
+  }
+
+
+  function buildEditorScript(): string {
+    return `<script>
+(function(){
+  var editBtn = document.getElementById('bw-edit-btn');
+  var articleView = document.getElementById('bw-article-view');
+  var editorContainer = document.getElementById('bw-editor-container');
+  var textarea = document.getElementById('bw-editor-textarea');
+  var saveBtn = document.getElementById('bw-save-btn');
+  var cancelBtn = document.getElementById('bw-cancel-btn');
+  if (!editBtn || !articleView || !editorContainer || !textarea) return;
+  var category = editBtn.getAttribute('data-category');
+  var slug = editBtn.getAttribute('data-slug');
+  editBtn.addEventListener('click', function(){
+    articleView.style.display = 'none';
+    editorContainer.style.display = 'block';
+    editBtn.style.display = 'none';
+  });
+  cancelBtn.addEventListener('click', function(){
+    articleView.style.display = '';
+    editorContainer.style.display = 'none';
+    editBtn.style.display = '';
+  });
+  function insertAround(before, after){
+    var start = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var text = textarea.value;
+    var selected = text.substring(start, end) || 'text';
+    textarea.value = text.substring(0, start) + before + selected + after + text.substring(end);
+    textarea.focus();
+    textarea.selectionStart = start + before.length;
+    textarea.selectionEnd = start + before.length + selected.length;
+  }
+  document.getElementById('bw-tb-bold').addEventListener('click', function(){ insertAround('**', '**'); });
+  document.getElementById('bw-tb-link').addEventListener('click', function(){ insertAround('[[', ']]'); });
+  document.getElementById('bw-tb-heading').addEventListener('click', function(){
+    var start = textarea.selectionStart;
+    var text = textarea.value;
+    var lineStart = text.lastIndexOf('\\n', start - 1) + 1;
+    textarea.value = text.substring(0, lineStart) + '## ' + text.substring(lineStart);
+    textarea.focus();
+  });
+  saveBtn.addEventListener('click', function(){
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    fetch('/article/' + encodeURIComponent(category) + '/' + encodeURIComponent(slug), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: textarea.value })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if (data.ok) {
+        var toast = document.createElement('div');
+        toast.className = 'bw-toast';
+        toast.textContent = 'Saved!';
+        document.body.appendChild(toast);
+        setTimeout(function(){ toast.remove(); }, 2200);
+        setTimeout(function(){ location.reload(); }, 600);
+      } else {
+        alert('Save failed: ' + (data.error || 'unknown error'));
+      }
+    })
+    .catch(function(err){ alert('Save failed: ' + err.message); })
+    .finally(function(){ saveBtn.disabled = false; saveBtn.textContent = 'Save'; });
+  });
+})();
+<\/script>`;
+  }
+
+  function buildCommentsScript(): string {
+    return `<script>
+(function(){
+  var container = document.getElementById('bw-comments');
+  var list = document.getElementById('bw-comments-list');
+  var countEl = document.getElementById('bw-comment-count');
+  var textEl = document.getElementById('bw-comment-text');
+  var authorEl = document.getElementById('bw-comment-author');
+  var submitBtn = document.getElementById('bw-comment-submit');
+  if (!container || !list) return;
+  var category = container.getAttribute('data-category');
+  var slug = container.getAttribute('data-slug');
+  var baseUrl = '/_comments/' + encodeURIComponent(category) + '/' + encodeURIComponent(slug);
+  function escHtml(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function renderComments(comments){
+    countEl.textContent = '(' + comments.length + ')';
+    if (comments.length === 0){
+      list.innerHTML = '<p style="color:#999;font-size:13px;">No comments yet.</p>';
+      return;
+    }
+    list.innerHTML = comments.map(function(c){
+      var date = new Date(c.createdAt);
+      var dateStr = isNaN(date.getTime()) ? c.createdAt : date.toLocaleString();
+      return '<div class="bw-comment" data-id="' + escHtml(c.id) + '">' +
+        '<button class="bw-comment-delete" title="Delete">&times;</button>' +
+        '<div class="bw-comment-meta">' + escHtml(c.author || 'anonymous') + ' &middot; ' + escHtml(dateStr) + '</div>' +
+        '<div class="bw-comment-text">' + escHtml(c.text) + '</div></div>';
+    }).join('');
+    list.querySelectorAll('.bw-comment-delete').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = btn.parentElement.getAttribute('data-id');
+        if (!confirm('Delete this comment?')) return;
+        fetch(baseUrl + '/' + encodeURIComponent(id), { method: 'DELETE' })
+          .then(function(r){ return r.json(); })
+          .then(function(data){ renderComments(data); })
+          .catch(function(err){ alert('Delete failed: ' + err.message); });
+      });
+    });
+  }
+  fetch(baseUrl).then(function(r){ return r.json(); }).then(renderComments).catch(function(){ renderComments([]); });
+  submitBtn.addEventListener('click', function(){
+    var text = textEl.value.trim();
+    if (!text) return;
+    submitBtn.disabled = true;
+    fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, author: authorEl.value.trim() || undefined })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data){ renderComments(data); textEl.value = ''; })
+    .catch(function(err){ alert('Failed: ' + err.message); })
+    .finally(function(){ submitBtn.disabled = false; });
+  });
+})();
+<\/script>`;
   }
 
   function renderAllPage(articles: Article[], manifest: Manifest): string {
@@ -1205,6 +1475,447 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
     });
   }
 
+  function renderLintPage(manifest: Manifest): string {
+    const lintResultsPath = join(bwDir, 'outputs', 'lint-results.json');
+    let lintResult: LintResult | null = null;
+    if (existsSync(lintResultsPath)) {
+      try {
+        lintResult = JSON.parse(readFileSync(lintResultsPath, 'utf-8')) as LintResult;
+      } catch {
+        lintResult = null;
+      }
+    }
+    let bodyHtml = '<h1 class="bw-title">Wiki Quality Check</h1>';
+    if (!lintResult) {
+      bodyHtml += '<div class="bw-lint-run-section">' +
+        '<p>No lint results found. Run a quality check to analyze wiki articles for contradictions, missing data, and other issues.</p>' +
+        '<p style="margin-bottom:24px;color:var(--bw-text-muted);font-size:13px;">This uses the LLM and may take a minute or two.</p>' +
+        '<button class="bw-lint-run-btn" id="bw-lint-run" onclick="runLintCheck()">Run Lint Check</button>' +
+        '<div id="bw-lint-status" style="margin-top:16px;color:var(--bw-text-muted);"></div>' +
+        '</div>' +
+        '<script>function runLintCheck(){var btn=document.getElementById("bw-lint-run"),status=document.getElementById("bw-lint-status");btn.disabled=true;btn.textContent="Running...";status.textContent="Analyzing articles with LLM... This may take a few minutes.";fetch("/_lint/run",{method:"POST"}).then(function(r){return r.json()}).then(function(d){if(d.success){location.reload()}else{status.textContent="Error: "+(d.error||"Unknown");btn.disabled=false;btn.textContent="Run Lint Check"}}).catch(function(e){status.textContent="Error: "+e.message;btn.disabled=false;btn.textContent="Run Lint Check"})}</script>';
+    } else {
+      const lr = lintResult!;
+      const issues = lr.issues;
+      const criticalCount = issues.filter((i: { severity: string }) => i.severity === 'critical').length;
+      const warningCount = issues.filter((i: { severity: string }) => i.severity === 'warning').length;
+      const infoCount = issues.filter((i: { severity: string }) => i.severity === 'info').length;
+      bodyHtml += '<p style="color:var(--bw-text-muted);margin-bottom:16px;">Last run: ' + escapeHtml(formatJST(lr.timestamp)) + ' | ' + lr.articleCount + ' articles analyzed</p>';
+      bodyHtml += '<div class="bw-lint-summary">' +
+        '<div class="bw-lint-stat total"><div class="bw-lint-stat-value">' + issues.length + '</div><div class="bw-lint-stat-label">Total Issues</div></div>' +
+        '<div class="bw-lint-stat critical"><div class="bw-lint-stat-value">' + criticalCount + '</div><div class="bw-lint-stat-label">Critical</div></div>' +
+        '<div class="bw-lint-stat warning"><div class="bw-lint-stat-value">' + warningCount + '</div><div class="bw-lint-stat-label">Warning</div></div>' +
+        '<div class="bw-lint-stat info"><div class="bw-lint-stat-value">' + infoCount + '</div><div class="bw-lint-stat-label">Info</div></div>' +
+        '</div>';
+      const sevIcon: Record<string, string> = { critical: '\uD83D\uDD34', warning: '\uD83D\uDFE1', info: '\uD83D\uDD35' };
+      for (const issue of issues) {
+        const icon = sevIcon[issue.severity] ?? '\uD83D\uDD35';
+        const artLinks = issue.articles.map((a: string) => '<a href="/search?q=' + encodeURIComponent(a) + '">' + escapeHtml(a) + '</a>').join('');
+        bodyHtml += '<div class="bw-lint-card ' + issue.severity + '">' +
+          '<div class="bw-lint-card-header"><span class="bw-lint-card-severity">' + icon + '</span><span class="bw-lint-card-category">' + escapeHtml(issue.category) + '</span></div>' +
+          '<div class="bw-lint-card-desc">' + escapeHtml(issue.description) + '</div>' +
+          (issue.suggestion ? '<div class="bw-lint-card-suggestion">' + escapeHtml(issue.suggestion) + '</div>' : '') +
+          (artLinks ? '<div class="bw-lint-card-articles">' + artLinks + '</div>' : '') +
+          '</div>';
+      }
+      bodyHtml += '<div style="margin-top:24px;">' +
+        '<button class="bw-lint-run-btn" id="bw-lint-run" onclick="runLintCheck()">Re-run Lint</button>' +
+        '<div id="bw-lint-status" style="margin-top:12px;color:var(--bw-text-muted);"></div>' +
+        '</div>' +
+        '<script>function runLintCheck(){var btn=document.getElementById("bw-lint-run"),status=document.getElementById("bw-lint-status");btn.disabled=true;btn.textContent="Running...";status.textContent="Analyzing articles with LLM... This may take a few minutes.";fetch("/_lint/run",{method:"POST"}).then(function(r){return r.json()}).then(function(d){if(d.success){location.reload()}else{status.textContent="Error: "+(d.error||"Unknown");btn.disabled=false;btn.textContent="Re-run Lint"}}).catch(function(e){status.textContent="Error: "+e.message;btn.disabled=false;btn.textContent="Re-run Lint"})}</script>' +
+        '<details style="margin-top:24px;"><summary style="cursor:pointer;color:var(--bw-text-muted);font-size:13px;">Show raw report</summary>' +
+        '<div class="bw-lint-raw">' + escapeHtml(lintResult.rawReport) + '</div></details>';
+    }
+    return htmlShell({ title: 'Wiki Quality Check', projectName: config.projectName, categories: config.categories, body: bodyHtml, lastCompile: manifest.lastCompile, extraHead: liveReloadScript });
+  }
+
+  function renderSuggestionsPage(articles: Article[], manifest: Manifest): string {
+    const suggestionsFilePath = join(bwDir, 'outputs', 'link-suggestions.json');
+    let suggestions: Array<{
+      sourceArticle: string;
+      sourceTitle: string;
+      targetArticle: string;
+      targetTitle: string;
+      context: string;
+    }> = [];
+    if (existsSync(suggestionsFilePath)) {
+      try {
+        const rawData = JSON.parse(readFileSync(suggestionsFilePath, 'utf-8'));
+        if (Array.isArray(rawData)) suggestions = rawData;
+      } catch {
+        // ignore
+      }
+    }
+
+    const rows = suggestions.map((s) => {
+      return `<div style="padding: 12px 16px; border-bottom: 1px solid #eaecf0; display: flex; align-items: flex-start; gap: 12px;">
+        <div style="flex: 1;">
+          <div style="font-size: 14px; margin-bottom: 4px;">
+            In <a href="/article/${escapeHtml(s.sourceArticle)}" style="font-weight: 600;">${escapeHtml(s.sourceTitle)}</a>,
+            the text mentions <a href="/article/${escapeHtml(s.targetArticle)}" style="font-weight: 600;">${escapeHtml(s.targetTitle)}</a>
+          </div>
+          <div style="font-size: 12px; color: #72777d; font-style: italic;">${escapeHtml(s.context)}</div>
+        </div>
+        <div style="flex-shrink: 0;">
+          <span class="bw-badge conf-medium" style="cursor: default;" title="Suggest adding a link">Suggest: [[${escapeHtml(s.targetTitle)}]]</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    const nav = renderContextNav(articles);
+    const body = `
+      <div class="bw-page-layout">
+        <aside class="bw-context-nav">${nav}</aside>
+        <div>
+          <div class="bw-breadcrumb"><a href="/">Main Page</a> &rsaquo; Link Suggestions</div>
+          <h1 class="bw-title">Link Suggestions</h1>
+          <div class="bw-subtitle">${suggestions.length} potential cross-reference${suggestions.length === 1 ? '' : 's'} found</div>
+          <p style="color: #72777d; font-size: 13px; margin-bottom: 16px;">Articles that mention other articles by name without linking to them.</p>
+          <div style="border: 1px solid #eaecf0; border-radius: 6px; overflow: hidden;">
+            ${rows || '<div style="padding: 16px; color: #72777d;">No suggestions available. Run <code>brandwiki compile</code> to generate.</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+
+    return htmlShell({
+      title: 'Link Suggestions',
+      projectName: config.projectName,
+      categories: config.categories,
+      body,
+      lastCompile: manifest.lastCompile,
+      extraHead: liveReloadScript,
+    });
+  }
+
+  function renderBrandbookReport(article: Article, catId: string, catTitle: string, articles: Article[], manifest: Manifest): string {
+    const processed = processArticleBody({
+      body: article.body,
+      articleIndex: buildIndex(articles),
+    });
+
+    // Detect content types for special rendering
+    const html = processed.html;
+
+    // Enhance tables with report styling
+    const enhancedHtml = html
+      .replace(/<table>/g, '<table class="bb-table">')
+      .replace(/<h2/g, '<h2 class="bb-section-title"')
+      .replace(/<h3/g, '<h3 class="bb-subsection-title"')
+      .replace(/<blockquote>/g, '<blockquote class="bb-callout">');
+
+    // Determine report type based on slug for special layouts
+    const slugLower = article.slug.toLowerCase();
+    let specialSection = '';
+
+    // SWOT → 2x2 quadrant (detect from content)
+    if (slugLower.includes('swot')) {
+      specialSection = `<div class="bb-swot-grid">
+        <div class="bb-swot-cell bb-swot-s"><div class="bb-swot-label">S</div><div class="bb-swot-title">Strengths</div></div>
+        <div class="bb-swot-cell bb-swot-w"><div class="bb-swot-label">W</div><div class="bb-swot-title">Weaknesses</div></div>
+        <div class="bb-swot-cell bb-swot-o"><div class="bb-swot-label">O</div><div class="bb-swot-title">Opportunities</div></div>
+        <div class="bb-swot-cell bb-swot-t"><div class="bb-swot-label">T</div><div class="bb-swot-title">Threats</div></div>
+      </div>`;
+    }
+
+    // KPI → metric cards
+    if (slugLower.includes('kpi')) {
+      specialSection = `<div class="bb-kpi-hint">📊 KPIs are extracted from the analysis below</div>`;
+    }
+
+    const groupLabel = catTitle;
+    const groupIcon = catId === 'bb-brand-foundation' ? '📕'
+      : catId === 'bb-competitive' ? '📊'
+      : catId === 'bb-partnership' ? '🤝'
+      : catId === 'bb-persona' ? '👤'
+      : catId === 'bb-design' ? '🎨'
+      : catId === 'bb-strategy' ? '🔮' : '📋';
+
+    // Related reports in same category
+    const relatedReports = articles
+      .filter((a) => a.category === catId && a.slug !== article.slug)
+      .map((a) => `<a href="/article/${a.category}/${a.slug}" class="bb-related-link">${escapeHtml(a.title)}</a>`)
+      .join('');
+
+    const body = `
+      <div class="bb-report">
+        <div class="bb-report-header">
+          <div class="bb-report-badge">${groupIcon} ${escapeHtml(groupLabel)}</div>
+          <h1 class="bb-report-title">${escapeHtml(article.title)}</h1>
+          <div class="bb-report-meta">
+            <span>${escapeHtml(config.projectName)}</span>
+            <span class="bb-separator">·</span>
+            <span>${article.updatedAtIso ? formatJST(article.updatedAtIso) : ''}</span>
+            <span class="bb-separator">·</span>
+            <span>${article.words} words</span>
+            <span class="bb-separator">·</span>
+            <span class="bb-confidence bb-conf-${article.confidence}">${article.confidence.toUpperCase()}</span>
+          </div>
+        </div>
+
+        ${specialSection}
+
+        <div class="bb-report-body">
+          ${enhancedHtml}
+        </div>
+
+        ${relatedReports ? `<div class="bb-related">
+          <div class="bb-related-title">Related Reports</div>
+          <div class="bb-related-grid">${relatedReports}</div>
+        </div>` : ''}
+
+        <div class="bb-report-footer">
+          <div class="bb-disclaimer">
+            This report was auto-generated by brandwiki-engine from project data and external sources.
+            Generated for ${escapeHtml(config.projectName)} · ${new Date().toLocaleDateString('ja-JP')}
+          </div>
+          <a href="/" class="bb-back-link">← Back to Wiki</a>
+        </div>
+      </div>
+    `;
+
+    return htmlShell({
+      title: `${article.title} — ${groupLabel}`,
+      projectName: config.projectName,
+      categories: config.categories,
+      currentCategory: catId,
+      body,
+      lastCompile: manifest.lastCompile,
+      extraHead: liveReloadScript,
+    });
+  }
+
+  function renderChatPage(manifest: Manifest): string {
+    const langLabel = config.language === 'ja' ? '日本語で回答してください' : 'Answer in English';
+    const placeholder = config.language === 'ja' ? 'Wiki について質問...' : 'Ask about the wiki...';
+    return htmlShell({
+      title: 'Chat',
+      projectName: config.projectName,
+      categories: config.categories,
+      body: `
+        <div style="max-width:800px;margin:0 auto;display:flex;flex-direction:column;height:calc(100vh - 120px);">
+          <h1 class="bw-title">Chat with ${escapeHtml(config.projectName)} Wiki</h1>
+          <div id="bw-chat-messages" style="flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:12px;"></div>
+          <div style="padding:12px 0;border-top:1px solid var(--bw-border, #ddd);display:flex;gap:8px;">
+            <input id="bw-chat-input" type="text" placeholder="${placeholder}" style="flex:1;padding:10px 14px;border:1px solid var(--bw-border, #ddd);border-radius:6px;font-size:14px;background:var(--bw-input-bg, #f8f9fa);color:var(--bw-text, #202122);" />
+            <button id="bw-chat-send" style="padding:10px 20px;background:#3366cc;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">Send</button>
+          </div>
+        </div>
+        <script>
+        (function(){
+          var msgs = document.getElementById('bw-chat-messages');
+          var input = document.getElementById('bw-chat-input');
+          var btn = document.getElementById('bw-chat-send');
+          function addMsg(role, text) {
+            var div = document.createElement('div');
+            div.style.cssText = role === 'user'
+              ? 'align-self:flex-end;background:#3366cc;color:#fff;padding:10px 14px;border-radius:12px 12px 2px 12px;max-width:70%;'
+              : 'align-self:flex-start;background:var(--bw-card-bg, #f0f0f0);padding:10px 14px;border-radius:12px 12px 12px 2px;max-width:80%;white-space:pre-wrap;';
+            div.textContent = text;
+            msgs.appendChild(div);
+            msgs.scrollTop = msgs.scrollHeight;
+            return div;
+          }
+          function send() {
+            var q = input.value.trim();
+            if (!q) return;
+            addMsg('user', q);
+            input.value = '';
+            var loading = addMsg('ai', 'Thinking...');
+            fetch('/_chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q }) })
+              .then(function(r){ return r.json(); })
+              .then(function(d){ loading.textContent = d.answer || d.error || 'No response'; })
+              .catch(function(e){ loading.textContent = 'Error: ' + e.message; });
+          }
+          btn.addEventListener('click', send);
+          input.addEventListener('keydown', function(e){ if (e.key === 'Enter') send(); });
+        })();
+        </script>`,
+      lastCompile: manifest.lastCompile,
+      extraHead: liveReloadScript,
+    });
+  }
+
+  function renderGraphPage(articles: Article[], manifest: Manifest): string {
+    const graph = buildBacklinkGraph(articles);
+    const catColorMap: Record<string, string> = {};
+    const catTitleMap: Record<string, string> = {};
+    for (const c of config.categories) { catColorMap[c.id] = categoryColor(c.id); catTitleMap[c.id] = c.title; }
+    const graphLegend = config.categories
+      .filter((c) => articles.some((a) => a.category === c.id))
+      .map((c) => `<span class="bw-legend-item"><span class="bw-legend-dot" style="background:${categoryColor(c.id)}"></span>${escapeHtml(c.title)}</span>`)
+      .join('');
+    const fullGraphScript = `<script>
+(function(){
+  if (!window.d3) return;
+  var data = ${JSON.stringify(graph)};
+  var colors = ${JSON.stringify(catColorMap)};
+  var catTitles = ${JSON.stringify(catTitleMap)};
+  var container = document.getElementById('bw-graph-container');
+  var svgEl = document.getElementById('bw-graph-svg');
+  var tooltipEl = document.getElementById('bw-graph-tooltip');
+  if (!container || !svgEl) return;
+  var width = container.clientWidth;
+  var height = container.clientHeight || 720;
+  var svg = d3.select(svgEl).attr('viewBox', '0 0 ' + width + ' ' + height);
+  var g = svg.append('g').attr('class', 'zoom-layer');
+  var adjacency = {};
+  data.nodes.forEach(function(n){ adjacency[n.id] = new Set([n.id]); });
+  data.links.forEach(function(l){
+    var s = typeof l.source === 'string' ? l.source : l.source.id;
+    var t = typeof l.target === 'string' ? l.target : l.target.id;
+    adjacency[s].add(t); adjacency[t].add(s);
+  });
+  function atomRadius(d){ return 5 + Math.min(14, d.degree * 1.6); }
+  var simulation = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.links).id(function(d){ return d.id; }).distance(100).strength(0.7))
+    .force('charge', d3.forceManyBody().strength(-260).distanceMax(350))
+    .force('center', d3.forceCenter(width/2, height/2))
+    .force('collide', d3.forceCollide().radius(function(d){ return atomRadius(d)+6; }))
+    .force('x', d3.forceX(width/2).strength(0.08))
+    .force('y', d3.forceY(height/2).strength(0.08))
+    .alphaTarget(0.008);
+  var link = g.append('g').attr('class','links').selectAll('line').data(data.links).enter().append('line').attr('class','link').attr('data-type', function(d){ return d.type || 'reference'; });
+  var node = g.append('g').attr('class','nodes').selectAll('g').data(data.nodes).enter().append('g').attr('class','node');
+  node.append('circle').attr('class','atom').attr('r', atomRadius).attr('fill', function(d){ return colors[d.category]||'#888'; });
+  node.append('text').attr('class','label').attr('dy', function(d){ return atomRadius(d)+15; }).text(function(d){ return d.label.length>14?d.label.slice(0,13)+'…':d.label; });
+  var drag = d3.drag().on('start',function(e,d){ if(!e.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; }).on('drag',function(e,d){ d.fx=e.x; d.fy=e.y; }).on('end',function(e,d){ if(!e.active) simulation.alphaTarget(0.008); d.fx=null; d.fy=null; });
+  node.call(drag);
+  var zoom = d3.zoom().scaleExtent([0.25,5]).on('zoom',function(e){ g.attr('transform',e.transform); });
+  svg.call(zoom);
+  node.on('mouseenter',function(e,d){
+    var c = adjacency[d.id]||new Set([d.id]);
+    node.classed('dim',function(n){return !c.has(n.id);}).classed('highlight',function(n){return c.has(n.id);});
+    link.classed('dim',function(l){ var s=typeof l.source==='object'?l.source.id:l.source; var t=typeof l.target==='object'?l.target.id:l.target; return !(s===d.id||t===d.id); });
+    link.classed('highlight',function(l){ var s=typeof l.source==='object'?l.source.id:l.source; var t=typeof l.target==='object'?l.target.id:l.target; return s===d.id||t===d.id; });
+    tooltipEl.classList.add('visible'); tooltipEl.innerHTML='<div class="tt-title">'+d.label+'</div><div class="tt-meta">'+d.degree+' connections</div>';
+    tooltipEl.style.left=(e.clientX+14)+'px'; tooltipEl.style.top=(e.clientY+14)+'px';
+  });
+  node.on('mouseleave',function(){ node.classed('dim',false).classed('highlight',false); link.classed('dim',false).classed('highlight',false); tooltipEl.classList.remove('visible'); });
+  node.on('dblclick',function(e,d){ e.stopPropagation(); window.location.href=d.url; });
+  simulation.on('tick',function(){
+    link.attr('x1',function(d){return d.source.x;}).attr('y1',function(d){return d.source.y;}).attr('x2',function(d){return d.target.x;}).attr('y2',function(d){return d.target.y;});
+    node.attr('transform',function(d){return 'translate('+d.x+','+d.y+')';});
+  });
+  var searchInput = document.getElementById('bw-graph-search');
+  if(searchInput) searchInput.addEventListener('input',function(){
+    var q = this.value.trim().toLowerCase();
+    node.classed('hit',function(d){return q&&d.label.toLowerCase().indexOf(q)!==-1;});
+    node.classed('dim',function(d){return q&&d.label.toLowerCase().indexOf(q)===-1;});
+  });
+  var btnIn=document.getElementById('bw-zoom-in'); var btnOut=document.getElementById('bw-zoom-out'); var btnReset=document.getElementById('bw-zoom-reset');
+  if(btnIn) btnIn.addEventListener('click',function(){ svg.transition().duration(220).call(zoom.scaleBy,1.4); });
+  if(btnOut) btnOut.addEventListener('click',function(){ svg.transition().duration(220).call(zoom.scaleBy,0.7); });
+  if(btnReset) btnReset.addEventListener('click',function(){ svg.transition().duration(360).call(zoom.transform,d3.zoomIdentity); });
+})();
+</script>`;
+    return htmlShell({
+      title: 'Graph',
+      projectName: config.projectName,
+      categories: config.categories,
+      body: `
+        <div class="bw-graph-legend" id="bw-graph-legend">
+          <span class="bw-legend-label"><a href="/" style="color:inherit;">← Back</a> | Backlink Graph</span>
+          <span style="color:#a2a9b1;">|</span>
+          ${graphLegend}
+        </div>
+        <div class="bw-graph-container" id="bw-graph-container" style="height:calc(100vh - 105px);">
+          <svg id="bw-graph-svg"></svg>
+          <div class="bw-graph-mini-search"><input type="search" id="bw-graph-search" placeholder="Search..." /></div>
+          <div class="bw-graph-zoom">
+            <button id="bw-zoom-out" title="Zoom out">−</button>
+            <div class="bw-graph-zoom-level" id="bw-zoom-level">100%</div>
+            <button id="bw-zoom-in" title="Zoom in">＋</button>
+            <button id="bw-zoom-reset" title="Reset">⊙</button>
+          </div>
+          <div class="bw-graph-tooltip" id="bw-graph-tooltip"></div>
+        </div>
+        ${fullGraphScript}`,
+      lastCompile: manifest.lastCompile,
+      extraHead: liveReloadScript,
+      needsD3: true,
+    });
+  }
+
+  function renderTimelinePage(articles: Article[], manifest: Manifest): string {
+    const sorted = [...articles].sort((a, b) => {
+      const da = a.updatedAtIso || ''; const db = b.updatedAtIso || '';
+      return db.localeCompare(da);
+    });
+    const groups: Record<string, Article[]> = {};
+    for (const a of sorted) {
+      const d = a.updatedAtIso ? new Date(a.updatedAtIso) : new Date();
+      const key = d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long' });
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
+    }
+    let timeline = '<div style="max-width:800px;margin:0 auto;padding:20px;">';
+    timeline += '<h1 class="bw-title">Timeline</h1>';
+    for (const [month, arts] of Object.entries(groups)) {
+      timeline += `<h2 style="margin-top:24px;font-size:16px;color:var(--bw-text-secondary,#555);">${escapeHtml(month)}</h2>`;
+      timeline += '<div style="border-left:2px solid var(--bw-border,#ddd);margin-left:8px;padding-left:20px;">';
+      for (const a of arts) {
+        const color = categoryColor(a.category);
+        const catTitle = config.categories.find(c => c.id === a.category)?.title || a.category;
+        const date = a.updatedAtIso ? new Date(a.updatedAtIso).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' }) : '';
+        timeline += `<div style="margin:12px 0;position:relative;">
+          <div style="position:absolute;left:-27px;top:4px;width:12px;height:12px;border-radius:50%;background:${color};border:2px solid var(--bw-bg, #fff);"></div>
+          <a href="/article/${a.category}/${a.slug}" style="font-weight:600;">${escapeHtml(a.title)}</a>
+          <div style="font-size:11px;color:var(--bw-text-muted,#888);">${escapeHtml(catTitle)} · ${a.words} words · ${a.confidence} · ${date}</div>
+        </div>`;
+      }
+      timeline += '</div>';
+    }
+    timeline += '</div>';
+    return htmlShell({ title: 'Timeline', projectName: config.projectName, categories: config.categories, body: timeline, lastCompile: manifest.lastCompile, extraHead: liveReloadScript });
+  }
+
+  function renderChangesPage(articles: Article[], manifest: Manifest): string {
+    const lastCompile = manifest.lastCompile;
+    const recent = lastCompile ? articles.filter(a => a.updatedAtIso && a.updatedAtIso.startsWith(lastCompile.slice(0, 10))) : [];
+    let body = '<div style="max-width:800px;margin:0 auto;padding:20px;">';
+    body += '<h1 class="bw-title">Recent Changes</h1>';
+    if (recent.length === 0) {
+      body += '<p>No articles were updated in the most recent compile.</p>';
+    } else {
+      body += `<p>${recent.length} articles updated (last compile: ${lastCompile ? formatJST(lastCompile) : 'never'})</p><ul>`;
+      for (const a of recent) {
+        body += `<li><a href="/article/${a.category}/${a.slug}">${escapeHtml(a.title)}</a> <span style="color:var(--bw-text-muted,#888);font-size:12px;">${a.updatedAtIso || ''}</span></li>`;
+      }
+      body += '</ul>';
+    }
+    body += '</div>';
+    return htmlShell({ title: 'Changes', projectName: config.projectName, categories: config.categories, body, lastCompile: manifest.lastCompile, extraHead: liveReloadScript });
+  }
+
+  function renderPdfExport(articles: Article[], manifest: Manifest): string {
+    let body = `<div style="max-width:900px;margin:0 auto;padding:20px;font-family:serif;">`;
+    body += `<h1>${escapeHtml(config.projectName)} — Brand Wiki</h1>`;
+    body += `<p>Exported on ${new Date().toLocaleString('ja-JP')} · ${articles.length} articles</p><hr>`;
+    const byCategory: Record<string, Article[]> = {};
+    for (const a of articles) { if (!byCategory[a.category]) byCategory[a.category] = []; byCategory[a.category].push(a); }
+    body += '<h2>Table of Contents</h2><ul>';
+    for (const cat of config.categories) {
+      const arts = byCategory[cat.id] || [];
+      if (arts.length === 0) continue;
+      body += `<li><strong>${escapeHtml(cat.title)}</strong><ul>`;
+      for (const a of arts) body += `<li><a href="#${a.category}-${a.slug}">${escapeHtml(a.title)}</a></li>`;
+      body += '</ul></li>';
+    }
+    body += '</ul><hr>';
+    for (const cat of config.categories) {
+      const arts = byCategory[cat.id] || [];
+      if (arts.length === 0) continue;
+      body += `<h2>${escapeHtml(cat.title)}</h2>`;
+      for (const a of arts) {
+        body += `<h3 id="${a.category}-${a.slug}">${escapeHtml(a.title)}</h3>`;
+        body += `<div>${a.body.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</div><hr>`;
+      }
+    }
+    body += '</div><style>@media print { body { font-size: 11pt; } a { color: inherit; text-decoration: none; } }</style>';
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHtml(config.projectName)} PDF Export</title></head><body>${body}</body></html>`;
+  }
+
   function render404(manifest: Manifest): string {
     return htmlShell({
       title: '404',
@@ -1252,6 +1963,237 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
         req.on('error', cleanup);
         res.on('error', cleanup);
         res.on('close', cleanup);
+        return;
+      }
+
+      if (url === '/_status') {
+        const manifest = loadManifest(bwDir);
+        const articles = await loadArticles();
+        const payload = {
+          mode: serverMode,
+          liveReload: !options.noLiveReload,
+          autoCompile: config.watch?.autoCompile ?? false,
+          articles: articles.length,
+          lastCompile: manifest.lastCompile ?? null,
+          lastBroadcastAt,
+          lastBroadcastReason,
+          broadcastCount,
+          sseClients: sseClients.size,
+          serverStartedAt,
+          now: Date.now(),
+          port,
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(JSON.stringify(payload));
+        return;
+      }
+
+      if (url === '/_graph') {
+        const articles = await loadArticles();
+        const graph = buildBacklinkGraph(articles);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(JSON.stringify({ ...graph, ts: Date.now() }));
+        return;
+      }
+
+      if (url === '/_chat' && req.method === 'POST') {
+        const chatChunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chatChunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+        const chatBody = Buffer.concat(chatChunks).toString('utf-8');
+        try {
+          const parsedChat = JSON.parse(chatBody);
+          const question = typeof parsedChat.question === 'string' ? parsedChat.question.trim() : '';
+          if (!question) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'question is required' }));
+            return;
+          }
+          const articles = await loadArticles();
+          const q = question.toLowerCase();
+          const matches = articles.filter(
+            (a) =>
+              a.title.toLowerCase().includes(q) ||
+              a.body.toLowerCase().includes(q)
+          ).slice(0, 5);
+          const answer = matches.length > 0
+            ? matches.map((a) => `[${a.title}](/article/${a.category}/${a.slug})`).join(', ')
+            : 'No matching articles found.';
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ answer, sources: matches.map((a) => ({ title: a.title, url: `/article/${a.category}/${a.slug}` })) }));
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'chat failed';
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: msg }));
+        }
+        return;
+      }
+
+      if (url === '/_lint/run' && req.method === 'POST') {
+        try {
+          const result = await runLint(bwDir);
+          invalidateCache();
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, issueCount: result.issues.length }));
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Lint failed';
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: message }));
+        }
+        return;
+      }
+
+      if (url === '/_lint') {
+        const lintResultsPath = join(bwDir, 'outputs', 'lint-results.json');
+        if (existsSync(lintResultsPath)) {
+          const data = readFileSync(lintResultsPath, 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+          res.end(data);
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ issues: [], rawReport: '', timestamp: null, articleCount: 0 }));
+        }
+        return;
+      }
+
+      // POST /article/:category/:slug — save edited article
+      if (url.startsWith('/article/') && req.method === 'POST') {
+        const postChunks: Buffer[] = [];
+        for await (const chunk of req) {
+          postChunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+        const postBody = Buffer.concat(postChunks).toString('utf-8');
+        try {
+          const parsedBody = JSON.parse(postBody);
+          const newContent = typeof parsedBody.content === 'string' ? parsedBody.content : '';
+          if (!newContent) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'content is required' }));
+            return;
+          }
+          const artParts = url.slice('/article/'.length).split('/');
+          if (artParts.length < 2) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'invalid article path' }));
+            return;
+          }
+          const editCat = artParts[0];
+          const editSlug = artParts.slice(1).join('/');
+          const filePath = join(bwDir, 'wiki', editCat, `${editSlug}.md`);
+          if (!existsSync(filePath)) {
+            res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'article not found' }));
+            return;
+          }
+          const existingRaw = readFileSync(filePath, 'utf-8');
+          const existingParsed = matter(existingRaw);
+          const updatedFile = matter.stringify(newContent, existingParsed.data);
+          writeFileSync(filePath, updatedFile, 'utf-8');
+          invalidateCache();
+          broadcastReload();
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'save failed';
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: msg }));
+        }
+        return;
+      }
+
+      // GET /_comments/:category/:slug
+      if (url.startsWith('/_comments/') && req.method === 'GET') {
+        const cParts = url.slice('/_comments/'.length).split('/');
+        if (cParts.length < 2) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'invalid path' }));
+          return;
+        }
+        const cCat = cParts[0];
+        const cSlug = cParts[1];
+        const cFile = join(bwDir, 'comments', cCat, `${cSlug}.json`);
+        let cList: unknown[] = [];
+        if (existsSync(cFile)) {
+          try { cList = JSON.parse(readFileSync(cFile, 'utf-8')); } catch { cList = []; }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(cList));
+        return;
+      }
+
+      // POST /_comments/:category/:slug
+      if (url.startsWith('/_comments/') && req.method === 'POST') {
+        const cParts = url.slice('/_comments/'.length).split('/');
+        if (cParts.length < 2) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'invalid path' }));
+          return;
+        }
+        const cCat = cParts[0];
+        const cSlug = cParts[1];
+        const postChunks: Buffer[] = [];
+        for await (const chunk of req) {
+          postChunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+        const postBody = Buffer.concat(postChunks).toString('utf-8');
+        try {
+          const parsedBody = JSON.parse(postBody);
+          const cText = typeof parsedBody.text === 'string' ? parsedBody.text.trim() : '';
+          if (!cText) {
+            res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'text is required' }));
+            return;
+          }
+          const cAuthor = typeof parsedBody.author === 'string' && parsedBody.author.trim()
+            ? parsedBody.author.trim() : 'anonymous';
+          const cDir = join(bwDir, 'comments', cCat);
+          mkdirSync(cDir, { recursive: true });
+          const cFile = join(cDir, `${cSlug}.json`);
+          let cList: unknown[] = [];
+          if (existsSync(cFile)) {
+            try { cList = JSON.parse(readFileSync(cFile, 'utf-8')); } catch { cList = []; }
+          }
+          const newComment = {
+            id: randomUUID(),
+            text: cText,
+            author: cAuthor,
+            createdAt: new Date().toISOString(),
+          };
+          const updatedList = [...cList, newComment];
+          writeFileSync(cFile, JSON.stringify(updatedList, null, 2), 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify(updatedList));
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'failed to add comment';
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: msg }));
+        }
+        return;
+      }
+
+      // DELETE /_comments/:category/:slug/:id
+      if (url.startsWith('/_comments/') && req.method === 'DELETE') {
+        const cParts = url.slice('/_comments/'.length).split('/');
+        if (cParts.length < 3) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'invalid path' }));
+          return;
+        }
+        const cCat = cParts[0];
+        const cSlug = cParts[1];
+        const cId = cParts[2];
+        const cFile = join(bwDir, 'comments', cCat, `${cSlug}.json`);
+        let cList: Array<{ id: string; [key: string]: unknown }> = [];
+        if (existsSync(cFile)) {
+          try { cList = JSON.parse(readFileSync(cFile, 'utf-8')); } catch { cList = []; }
+        }
+        const filtered = cList.filter((c) => c.id !== cId);
+        const cDir = join(bwDir, 'comments', cCat);
+        mkdirSync(cDir, { recursive: true });
+        writeFileSync(cFile, JSON.stringify(filtered, null, 2), 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(filtered));
         return;
       }
 
@@ -1307,6 +2249,20 @@ export async function serveCommand(options: ServeOptions): Promise<void> {
           ? viewParam
           : 'cards';
         html = renderCategoryPage(catId, articles, manifest, view);
+      } else if (url === '/chat') {
+        html = renderChatPage(manifest);
+      } else if (url === '/graph') {
+        html = renderGraphPage(articles, manifest);
+      } else if (url === '/timeline') {
+        html = renderTimelinePage(articles, manifest);
+      } else if (url === '/changes') {
+        html = renderChangesPage(articles, manifest);
+      } else if (url === '/suggestions') {
+        html = renderSuggestionsPage(articles, manifest);
+      } else if (url === '/lint') {
+        html = renderLintPage(manifest);
+      } else if (url === '/_export/pdf') {
+        html = renderPdfExport(articles, manifest);
       } else if (url.startsWith('/article/')) {
         const parts = url.slice('/article/'.length).split('/');
         if (parts.length >= 2) {
