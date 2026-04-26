@@ -71,6 +71,7 @@ brandwiki search <query>
 brandwiki query "<question>"
 brandwiki status
 brandwiki research [--competitor <name>] [--since <date>] [--compile] [--dry-run] [--force]
+brandwiki append [text] [--from <source>] [--type <type>] [--category <id>] [--stdin]
 ```
 
 ---
@@ -228,8 +229,44 @@ brandwiki serve
 
 - `generic` — 6 broad categories (Overview, Product, Architecture, Design, Operations, History)
 - `medical-app` — 9 categories tuned for healthcare apps (Japanese): ブランド, プロダクト, 医療ロジック, デザインシステム, アーキテクチャ, コンテンツ, 運用, 開発史, マーケット
+- `personal` — 17 categories for a personal life wiki (Japanese): 羅針盤, 自分, 目標, 身体, 食事, 健康, 日記, 学び, 仕事, 創作, 人, お金, 時間, 思い出, 自分のパターン, 自分との約束, PC作業ログ. Designed to be wrapped by a private security layer (e.g. a separate Hadi project) for at-rest encryption and offline-only operation. Ships with a `daily-template.md` for daily journaling.
 
 Add your own template as `templates/<name>/config.json`.
+
+---
+
+## Write-only Inbox (`brandwiki append`)
+
+External agents (a Claude Code session ending, an iOS Shortcut, a shell hook, or a private wrapper) can drop notes into the wiki **without being granted read access** to the existing content. The next `compile` folds them into the structured wiki.
+
+```bash
+brandwiki append --from claude-code --type task "Refactored auth middleware"
+brandwiki append --from manual --type thought --category 06-journal "Today I felt..."
+echo "Bench 80kg x 5" | brandwiki append --from cli --category 03-fitness --stdin
+```
+
+Files land in `raw/inbox/<YYYY-MM-DD>-<source>.md`, one per source per day, aggregated.
+
+---
+
+## Embedding the engine
+
+The CLI exits with the project root determined by walking up from `cwd` for `.brandwiki/`. To redirect every command at an arbitrary directory (useful when the wiki lives on a tmpfs / encrypted mount), set:
+
+```bash
+export BRANDWIKI_DIR=/path/to/dir   # may point at the parent or at .brandwiki/ itself
+brandwiki compile
+```
+
+Provider override:
+
+```bash
+export BRANDWIKI_PROVIDER=ollama    # claude-cli (default) | api | ollama
+export OLLAMA_HOST=http://127.0.0.1:11434
+export OLLAMA_MODEL=llama3.1:8b
+```
+
+The `ollama` provider lets the wiki run end-to-end with no content leaving the host.
 
 ---
 

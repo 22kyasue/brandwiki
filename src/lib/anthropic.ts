@@ -1,9 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { callClaudeCLI } from './claude-cli.js';
+import { callOllama } from './ollama.js';
 
 let client: Anthropic | null = null;
 
-export type Provider = 'claude-cli' | 'api';
+export type Provider = 'claude-cli' | 'api' | 'ollama';
 
 function getClient(): Anthropic {
   if (client) return client;
@@ -33,6 +34,14 @@ export async function callLLM(params: LLMParams): Promise<string> {
     return callClaudeCLI({
       system: params.system,
       user: params.user,
+    });
+  }
+
+  if (provider === 'ollama') {
+    return callOllama({
+      system: params.system,
+      user: params.user,
+      model: params.model,
     });
   }
 

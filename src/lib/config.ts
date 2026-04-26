@@ -60,6 +60,18 @@ export interface BrandwikiConfig {
 }
 
 export function findProjectRoot(startDir: string = process.cwd()): string {
+  // Explicit override — used by wrappers (e.g. Hadi) that mount the .brandwiki/
+  // tree on a tmpfs and need to redirect every command at it without depending
+  // on cwd. Accepts either the directory containing .brandwiki/ or the
+  // .brandwiki/ directory itself.
+  const override = process.env.BRANDWIKI_DIR;
+  if (override) {
+    const abs = resolve(override);
+    if (existsSync(join(abs, '.brandwiki', 'config.json'))) return abs;
+    if (existsSync(join(abs, 'config.json'))) return resolve(abs, '..');
+    throw new Error(`BRANDWIKI_DIR=${override} does not contain a .brandwiki/config.json`);
+  }
+
   let dir = resolve(startDir);
   while (dir !== resolve(dir, '..')) {
     if (existsSync(join(dir, '.brandwiki', 'config.json'))) return dir;

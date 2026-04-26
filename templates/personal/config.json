@@ -1,0 +1,96 @@
+{
+  "name": "personal",
+  "description": "Personal life wiki — store everything about yourself: goals, fitness, food, journal, relationships, money, patterns. Designed to be wrapped by a private security layer (e.g. the Hadi project) for at-rest encryption and offline-only operation.",
+  "categories": [
+    {
+      "id": "00-compass",
+      "title": "羅針盤",
+      "description": "人生のビジョン、Why、マニフェスト、絶対ルール、Anti-goals。滅多に書き換えない聖域。迷子になった時に戻る場所"
+    },
+    {
+      "id": "01-identity",
+      "title": "自分",
+      "description": "価値観、性格、強み・弱み、恐れ、夢、自伝。自分とは何者かの定義"
+    },
+    {
+      "id": "02-goals",
+      "title": "目標",
+      "description": "10年・5年・年・四半期・月・週の目標、バケットリスト、Why。進捗と現状の差分"
+    },
+    {
+      "id": "03-fitness",
+      "title": "身体",
+      "description": "ワークアウトログ、PR、種目別の重量推移、ランニング、体重・体組成"
+    },
+    {
+      "id": "04-nutrition",
+      "title": "食事",
+      "description": "食べたもの、PFC、レシピ、外食記録、食習慣のパターン"
+    },
+    {
+      "id": "05-health",
+      "title": "健康",
+      "description": "睡眠、気分、メンタル、病気、薬、エネルギー水準"
+    },
+    {
+      "id": "06-journal",
+      "title": "日記・思考",
+      "description": "生の感情、その日の出来事、考えたこと、気づき"
+    },
+    {
+      "id": "07-learning",
+      "title": "学び",
+      "description": "読んだ本、コース、insight、習得スキル、刺さった言葉"
+    },
+    {
+      "id": "08-work",
+      "title": "仕事",
+      "description": "キャリア、プロジェクト、勝ち負け、組んでる人、ネットワーク"
+    },
+    {
+      "id": "09-creative",
+      "title": "創作",
+      "description": "副業、アイデア、in-progress、リリース、インスピレーション源"
+    },
+    {
+      "id": "10-people",
+      "title": "人",
+      "description": "家族・友人・恋愛・ネットワークの各人プロファイル、会話履歴、贈り物、記念日"
+    },
+    {
+      "id": "11-money",
+      "title": "お金",
+      "description": "収入、支出、投資、サブスク、財務目標"
+    },
+    {
+      "id": "12-time",
+      "title": "時間",
+      "description": "習慣（連続日数）、ルーティン、時間の使い方、集中できた時間帯"
+    },
+    {
+      "id": "13-memories",
+      "title": "思い出",
+      "description": "旅、ライフイベント、達成、写真の文脈、忘れたくない瞬間"
+    },
+    {
+      "id": "14-patterns",
+      "title": "自分のパターン",
+      "description": "トリガー、先延ばしの癖、ピーク時間、復活儀式、自己認識の蓄積"
+    },
+    {
+      "id": "15-promises",
+      "title": "自分との約束",
+      "description": "守った/破った約束、矛盾の記録、宣言した未来。コーチが厳しさを引き出すソース"
+    },
+    {
+      "id": "16-pc-activity",
+      "title": "PC作業ログ",
+      "description": "Claude Code 等のエージェントから流入するセッション要約、作業履歴"
+    }
+  ],
+  "ingestPaths": [],
+  "watch": {
+    "debounceMs": 30000,
+    "autoCompile": false
+  }
+}

@@ -11,6 +11,7 @@ import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
+import { appendCommand } from './commands/append.js';
 
 const program = new Command();
 
@@ -22,7 +23,7 @@ program
 program
   .command('init')
   .description('Initialize .brandwiki/ in the current directory')
-  .option('-t, --template <name>', 'Template to use (generic, medical-app)', 'generic')
+  .option('-t, --template <name>', 'Template to use (generic, medical-app, personal)', 'generic')
   .option('-l, --language <lang>', 'Wiki language (ja, en)', 'ja')
   .option('-n, --name <name>', 'Project name')
   .action(initCommand);
@@ -86,6 +87,15 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('append [text]')
+  .description('Write-only inbox: append a note into raw/inbox/ (no read access required)')
+  .option('-f, --from <source>', 'Source label (e.g. claude-code, manual, shortcut)', 'manual')
+  .option('-t, --type <type>', 'Optional type tag (task, thought, fitness, etc.)')
+  .option('-c, --category <id>', 'Optional category hint for the compiler (e.g. 03-fitness)')
+  .option('--stdin', 'Read body from stdin instead of argument')
+  .action(appendCommand);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);
