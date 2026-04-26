@@ -2552,6 +2552,221 @@ a.bw-article-card:hover { text-decoration: none !important; }
 .bw-lint-run-btn:hover { background: #2255aa; text-decoration: none; }
 .bw-lint-run-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .bw-lint-raw { margin-top: 32px; padding: 16px; background: var(--bw-code-bg); border-radius: 4px; border: 1px solid var(--bw-border-light); white-space: pre-wrap; font-size: 13px; line-height: 1.6; font-family: 'JetBrains Mono', 'Consolas', monospace; }
+
+/* === Reading Theme: Oryzae (菌糸 / 発酵) ===
+   Activated via <html data-reading="oryzae">. Wraps the article page in a
+   paper-toned long-form layout and draws mycelium-like SVG threads from a
+   sticky source capsule to internal links ("spores") in the body. */
+html[data-reading="oryzae"] {
+  --oryzae-paper: #faf9f7;
+  --oryzae-ink: #2b2b2b;
+  --oryzae-meta: #666666;
+  --oryzae-mycelium: #cfa86e;
+  --oryzae-capsule-bg: #f0efe9;
+  --oryzae-capsule-border: #e0ded5;
+  --oryzae-hairline: #eae8e0;
+}
+html[data-reading="oryzae"] body {
+  background: var(--oryzae-paper);
+  color: var(--oryzae-ink);
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  line-height: 2.05;
+}
+html[data-reading="oryzae"] .bw-topbar {
+  background: rgba(250, 249, 247, 0.88);
+}
+html[data-reading="oryzae"] .bw-topbar::after {
+  background: linear-gradient(to bottom, rgba(0,0,0,0.06), transparent);
+}
+html[data-reading="oryzae"] .bw-topbar-brand,
+html[data-reading="oryzae"] .bw-topbar-brand-name,
+html[data-reading="oryzae"] .bw-topbar-brand-sub,
+html[data-reading="oryzae"] .bw-topbar-nav a {
+  color: var(--oryzae-ink);
+}
+html[data-reading="oryzae"] .bw-topbar-nav a:hover {
+  color: var(--oryzae-mycelium);
+}
+html[data-reading="oryzae"] .bw-topbar-search input {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: var(--oryzae-capsule-border);
+  color: var(--oryzae-ink);
+}
+html[data-reading="oryzae"] .bw-page {
+  background: var(--oryzae-paper);
+}
+/* Hide wiki chrome that clashes with long-form reading */
+html[data-reading="oryzae"] .bw-toc-sidebar,
+html[data-reading="oryzae"] .bw-article-infobox-col,
+html[data-reading="oryzae"] .bw-breadcrumb,
+html[data-reading="oryzae"] .bw-subtitle,
+html[data-reading="oryzae"] .bw-edit-btn,
+html[data-reading="oryzae"] .bw-comments,
+html[data-reading="oryzae"] .bw-categories-footer,
+html[data-reading="oryzae"] .bw-references,
+html[data-reading="oryzae"] .bw-mini-graph,
+html[data-reading="oryzae"] .bw-backlinks,
+html[data-reading="oryzae"] .bw-footer {
+  display: none !important;
+}
+/* Center article as a single manuscript column */
+html[data-reading="oryzae"] .bw-article-layout,
+html[data-reading="oryzae"] .bw-article-layout.no-toc,
+html[data-reading="oryzae"] .bw-article-layout.no-infobox {
+  display: block;
+  max-width: 720px;
+  margin: 80px auto 120px;
+  gap: 0;
+}
+html[data-reading="oryzae"] .bw-article-main {
+  max-width: none;
+  overflow: visible;
+}
+html[data-reading="oryzae"] .bw-title {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-size: clamp(2.4rem, 4.2vw, 4rem);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: #1a1a1a;
+  border: none;
+  margin: 0 0 2rem;
+}
+html[data-reading="oryzae"] .bw-article {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-size: 1.08rem;
+  line-height: 2.05;
+  color: #333;
+}
+html[data-reading="oryzae"] .bw-article p {
+  margin: 0 0 2rem;
+  text-align: justify;
+}
+html[data-reading="oryzae"] .bw-article h2,
+html[data-reading="oryzae"] .bw-article h3 {
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 500;
+  color: #1a1a1a;
+  border: none;
+  padding: 0;
+  margin: 2.8rem 0 1.4rem;
+}
+/* Spores: internal links */
+html[data-reading="oryzae"] .bw-article a[href^="/article/"],
+html[data-reading="oryzae"] .bw-article a[href^="/category/"] {
+  color: inherit;
+  position: relative;
+  display: inline-block;
+  text-decoration: none;
+  transition: color 1s ease, text-shadow 0.8s ease;
+}
+html[data-reading="oryzae"] .bw-article a[href^="/article/"]::after,
+html[data-reading="oryzae"] .bw-article a[href^="/category/"]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 1px;
+  background: var(--oryzae-mycelium);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.6s ease;
+}
+html[data-reading="oryzae"] .bw-article a[href^="/article/"].bw-spore-connected,
+html[data-reading="oryzae"] .bw-article a[href^="/category/"].bw-spore-connected {
+  color: #8c7040;
+  text-shadow: 0 0 1px rgba(207, 168, 110, 0.4);
+}
+html[data-reading="oryzae"] .bw-article a[href^="/article/"].bw-spore-connected::after,
+html[data-reading="oryzae"] .bw-article a[href^="/category/"].bw-spore-connected::after {
+  transform: scaleX(1);
+}
+/* Source capsule: vertical writing for JA, horizontal for EN */
+.bw-reading-capsule {
+  display: none;
+  position: fixed;
+  top: 22vh;
+  left: max(24px, calc((100vw - 720px) / 2 - 240px));
+  background: #f0efe9;
+  border: 1px solid #e0ded5;
+  border-radius: 999px;
+  padding: 32px 14px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-size: 1rem;
+  letter-spacing: 0.15em;
+  color: #2b2b2b;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  z-index: 30;
+  max-height: 56vh;
+  overflow: hidden;
+  user-select: none;
+  pointer-events: none;
+}
+html[data-reading="oryzae"] .bw-reading-capsule.bw-active { display: block; }
+html[lang="en"] .bw-reading-capsule {
+  writing-mode: horizontal-tb;
+  max-width: 180px;
+  border-radius: 18px;
+  text-align: center;
+  padding: 18px 22px;
+}
+@media (max-width: 1180px) {
+  html[data-reading="oryzae"] .bw-reading-capsule { display: none !important; }
+}
+.bw-mycelium-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+}
+html[data-reading="oryzae"] .bw-mycelium-layer.bw-active { display: block; }
+/* Reading-mode toggle button — labeled so it's not mistaken for a glyph */
+.bw-reading-toggle {
+  background: none;
+  border: 1px solid var(--bw-border);
+  border-radius: 4px;
+  height: 34px;
+  padding: 0 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--bw-text-secondary);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  margin-left: 8px;
+  flex-shrink: 0;
+  font-family: 'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  letter-spacing: 0.05em;
+}
+.bw-reading-toggle .bw-reading-glyph { font-size: 17px; line-height: 1; }
+.bw-reading-toggle .bw-reading-label { font-family: 'Inter', system-ui, sans-serif; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.bw-reading-toggle:hover {
+  background: var(--bw-sidebar-bg);
+  color: var(--bw-accent);
+  border-color: var(--bw-accent);
+}
+.bw-reading-toggle[aria-pressed="true"] {
+  background: #f0efe9;
+  border-color: var(--oryzae-mycelium, #cfa86e);
+  color: #8c7040;
+}
+html[data-reading="oryzae"] .bw-reading-toggle {
+  background: #f0efe9;
+  border-color: var(--oryzae-mycelium);
+  color: #8c7040;
+}
+@media (max-width: 720px) {
+  .bw-reading-toggle .bw-reading-label { display: none; }
+  .bw-reading-toggle { padding: 0 10px; }
+}
 `;
 
 export function htmlShell(params: {
@@ -2575,7 +2790,10 @@ export function htmlShell(params: {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(params.title)} — ${escapeHtml(params.projectName)} Wiki</title>
-<script>(function(){try{var t=localStorage.getItem('bw-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})()</script>
+<script>(function(){try{var t=localStorage.getItem('bw-theme');if(t!=='dark')document.documentElement.setAttribute('data-theme','light');var r=localStorage.getItem('bw-reading');if(r==='oryzae')document.documentElement.setAttribute('data-reading','oryzae');}catch(e){}})()</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;700&display=swap">
 ${params.needsHighlight ? `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>` : ''}
 ${params.needsD3 ? `<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>` : ''}
@@ -2609,6 +2827,7 @@ ${params.extraHead ?? ''}
     <span class="bw-live-text">Offline</span>
     <span class="bw-live-time" id="bw-live-time">—</span>
   </div>
+  <button class="bw-reading-toggle" id="bw-reading-toggle" type="button" title="Toggle Oryzae reading mode — paper theme with mycelium link trails" aria-label="Toggle reading mode" aria-pressed="false"><span class="bw-reading-glyph" aria-hidden="true">麹</span><span class="bw-reading-label">Reading</span></button>
   <button class="bw-theme-toggle" id="bw-theme-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">
     <span id="bw-theme-icon">☾</span>
   </button>
@@ -2677,6 +2896,173 @@ ${params.needsHighlight ? `<script>
       try { localStorage.setItem('bw-theme', 'light'); } catch(e){}
     }
     updateIcon();
+  });
+})();
+</script>
+<script>
+/* Oryzae reading mode — toggle + mycelium animation.
+   The mode persists in localStorage and is applied early (see head <script>).
+   On article pages this script injects a sticky source capsule and an SVG
+   layer that grows hyphae-like curves from the capsule to internal links. */
+(function(){
+  var html = document.documentElement;
+  var btn, pressed;
+  var capsule = null;
+  var canvas = null;
+  var sporeCandidates = [];
+  var activePaths = [];
+  var running = false;
+  var rafHandle = 0;
+  var maxConnections = 3;
+  var ns = 'http://www.w3.org/2000/svg';
+
+  function mode(){ return html.getAttribute('data-reading') || 'default'; }
+  function setMode(next){
+    if (next === 'oryzae') {
+      html.setAttribute('data-reading','oryzae');
+      try { localStorage.setItem('bw-reading','oryzae'); } catch(e){}
+    } else {
+      html.removeAttribute('data-reading');
+      try { localStorage.removeItem('bw-reading'); } catch(e){}
+    }
+    reflectBtn();
+    sync();
+  }
+  function reflectBtn(){
+    if (!btn) return;
+    var on = mode() === 'oryzae';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  function buildScaffolding(){
+    var article = document.querySelector('.bw-article');
+    if (!article) return false;
+    var titleEl = document.querySelector('h1.bw-title');
+    var title = ((titleEl && titleEl.textContent) || document.title || '').trim();
+    if (!capsule) {
+      capsule = document.createElement('div');
+      capsule.className = 'bw-reading-capsule';
+      capsule.textContent = title.slice(0, 28);
+      document.body.appendChild(capsule);
+    }
+    if (!canvas) {
+      canvas = document.createElementNS(ns, 'svg');
+      canvas.setAttribute('class', 'bw-mycelium-layer');
+      var defs = document.createElementNS(ns, 'defs');
+      defs.innerHTML = '<filter id="bw-mycelium-glow"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>';
+      canvas.appendChild(defs);
+      document.body.appendChild(canvas);
+    }
+    sporeCandidates = Array.prototype.slice.call(
+      article.querySelectorAll('a[href^="/article/"], a[href^="/category/"]')
+    );
+    return sporeCandidates.length > 0;
+  }
+
+  function createPath(target){
+    var p = document.createElementNS(ns, 'path');
+    p.setAttribute('fill','none');
+    p.setAttribute('stroke','#cfa86e');
+    p.setAttribute('stroke-width','1.3');
+    p.setAttribute('stroke-opacity','0.55');
+    p.setAttribute('filter','url(#bw-mycelium-glow)');
+    canvas.appendChild(p);
+    target.classList.add('bw-spore-connected');
+    return { el: p, target: target, progress: 0, phase: 'growing', life: 0 };
+  }
+
+  function rectOf(el){
+    var r = el.getBoundingClientRect();
+    return { cx: r.left + r.width/2, cy: r.top + r.height/2, left: r.left, right: r.right };
+  }
+
+  function clearAllPaths(){
+    activePaths.forEach(function(obj){
+      if (obj.el && obj.el.parentNode) obj.el.parentNode.removeChild(obj.el);
+      obj.target.classList.remove('bw-spore-connected');
+    });
+    activePaths = [];
+  }
+
+  function tick(){
+    if (!running) return;
+    if (capsule) {
+      var src = rectOf(capsule);
+      var startX = src.right;
+      var startY = src.cy;
+      var now = Date.now();
+      for (var i = activePaths.length - 1; i >= 0; i--) {
+        var obj = activePaths[i];
+        var tr = rectOf(obj.target);
+        var endX = tr.left;
+        var endY = tr.cy;
+        var cp1x = startX + 80 + Math.sin(now/1000 + i) * 18;
+        var cp1y = startY;
+        var cp2x = endX - 80 + Math.cos(now/800 + i) * 18;
+        var cp2y = endY;
+        obj.el.setAttribute('d', 'M ' + startX + ' ' + startY + ' C ' + cp1x + ' ' + cp1y + ', ' + cp2x + ' ' + cp2y + ', ' + endX + ' ' + endY);
+        var length = obj.el.getTotalLength();
+        obj.el.style.strokeDasharray = length;
+        if (obj.phase === 'growing') {
+          obj.progress += 0.018;
+          if (obj.progress >= 1) { obj.progress = 1; obj.phase = 'sustained'; obj.life = 140 + Math.random() * 220; }
+          obj.el.style.strokeDashoffset = length * (1 - obj.progress);
+        } else if (obj.phase === 'sustained') {
+          obj.el.style.strokeDashoffset = 0;
+          obj.life--;
+          if (obj.life <= 0) obj.phase = 'dying';
+        } else {
+          obj.progress -= 0.018;
+          obj.el.style.strokeDashoffset = length * (1 - obj.progress);
+          if (obj.progress <= 0) {
+            if (obj.el.parentNode) obj.el.parentNode.removeChild(obj.el);
+            obj.target.classList.remove('bw-spore-connected');
+            activePaths.splice(i, 1);
+          }
+        }
+      }
+      if (activePaths.length < maxConnections && Math.random() > 0.955) {
+        var visible = [];
+        for (var j = 0; j < sporeCandidates.length; j++) {
+          var el = sporeCandidates[j];
+          if (el.classList.contains('bw-spore-connected')) continue;
+          var r = el.getBoundingClientRect();
+          if (r.top > 40 && r.bottom < window.innerHeight - 40) visible.push(el);
+        }
+        if (visible.length) activePaths.push(createPath(visible[Math.floor(Math.random() * visible.length)]));
+      }
+    }
+    rafHandle = requestAnimationFrame(tick);
+  }
+
+  function start(){
+    if (running) return;
+    if (!buildScaffolding()) return;
+    capsule.classList.add('bw-active');
+    canvas.classList.add('bw-active');
+    running = true;
+    rafHandle = requestAnimationFrame(tick);
+  }
+  function stop(){
+    running = false;
+    if (rafHandle) cancelAnimationFrame(rafHandle);
+    rafHandle = 0;
+    clearAllPaths();
+    if (capsule) capsule.classList.remove('bw-active');
+    if (canvas) canvas.classList.remove('bw-active');
+  }
+  function sync(){ if (mode() === 'oryzae') start(); else stop(); }
+
+  window.addEventListener('resize', function(){ clearAllPaths(); });
+  window.addEventListener('pagehide', stop);
+
+  document.addEventListener('DOMContentLoaded', function(){
+    btn = document.getElementById('bw-reading-toggle');
+    if (btn) btn.addEventListener('click', function(){
+      setMode(mode() === 'oryzae' ? 'default' : 'oryzae');
+    });
+    reflectBtn();
+    sync();
   });
 })();
 </script>
