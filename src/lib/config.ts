@@ -44,6 +44,7 @@ export interface BrandwikiConfig {
     lint: string;
     query: string;
     research?: string;
+    explain?: string;
   };
   sources: Array<{ path: string; type: string; glob?: string }>;
   ingestPaths?: IngestRule[];

@@ -2767,6 +2767,203 @@ html[data-reading="oryzae"] .bw-reading-toggle {
   .bw-reading-toggle .bw-reading-label { display: none; }
   .bw-reading-toggle { padding: 0 10px; }
 }
+
+/* === Graph page (full-viewport explain mode) === */
+.bw-graph-page {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  height: calc(100vh - 54px);
+  overflow: hidden;
+}
+.bw-graph-page.panel-collapsed { grid-template-columns: 1fr 0; }
+.bw-graph-page .bw-graph-container { height: 100% !important; min-height: 0; }
+.bw-graph-page-main { position: relative; overflow: hidden; }
+
+/* Explain panel */
+.bw-explain-panel {
+  background: #ffffff;
+  border-left: 1px solid #d8dce0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.25s ease, opacity 0.2s ease;
+}
+.bw-explain-panel-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid #eaecf0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.bw-explain-panel-close {
+  background: none;
+  border: 1px solid #d8dce0;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #72777d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.bw-explain-panel-close:hover { background: #f0f0f0; }
+.bw-explain-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.75;
+}
+.bw-explain-panel-body h1 { font-size: 18px; margin: 20px 0 8px; }
+.bw-explain-panel-body h2 { font-size: 16px; margin: 18px 0 6px; }
+.bw-explain-panel-body h3 { font-size: 14.5px; margin: 14px 0 4px; }
+.bw-explain-panel-body p { margin: 0 0 12px; }
+.bw-explain-panel-body ul, .bw-explain-panel-body ol { margin: 0 0 12px; padding-left: 20px; }
+.bw-explain-panel-body code {
+  background: #f6f6f6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+.bw-explain-panel-body strong { font-weight: 600; }
+.bw-explain-empty {
+  color: #72777d;
+  text-align: center;
+  padding: 60px 24px;
+  line-height: 1.8;
+}
+.bw-explain-empty-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.5; }
+
+/* Loading animation */
+.bw-explain-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #72777d;
+  padding: 20px 0;
+}
+.bw-explain-loading-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a2a9b1;
+  animation: bw-dot-pulse 1.2s ease-in-out infinite;
+}
+.bw-explain-loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.bw-explain-loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bw-dot-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.1); }
+}
+
+/* Streaming cursor */
+.bw-explain-cursor::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #3366cc;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: bw-cursor-blink 0.8s step-end infinite;
+}
+@keyframes bw-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Selected node on graph */
+#bw-graph-svg .node.selected .atom {
+  stroke: #3366cc;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 6px rgba(51, 102, 204, 0.5));
+}
+#bw-graph-svg .node.selected .atom-ring {
+  stroke: #3366cc;
+  stroke-width: 2;
+  stroke-dasharray: 4 2;
+  opacity: 1;
+}
+#bw-graph-svg .node.selected .label {
+  font-weight: 700;
+  fill: #3366cc;
+}
+
+/* Explain action buttons (floating over graph) */
+.bw-graph-explain-actions {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+.bw-graph-explain-actions button {
+  background: #3366cc;
+  color: #fff;
+  border: none;
+  padding: 9px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.bw-graph-explain-actions button:hover:not(:disabled) { background: #2855b0; }
+.bw-graph-explain-actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.bw-graph-explain-actions button.secondary {
+  background: #ffffff;
+  color: #3366cc;
+  border: 1px solid #d8dce0;
+}
+.bw-graph-explain-actions button.secondary:hover:not(:disabled) { background: #f0f4ff; }
+
+/* Explain panel open toggle (shown when collapsed) */
+.bw-explain-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #fff;
+  border: 1px solid #d8dce0;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  z-index: 10;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  display: none;
+}
+.bw-graph-page.panel-collapsed .bw-explain-toggle { display: block; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .bw-graph-page { grid-template-columns: 1fr; }
+  .bw-explain-panel {
+    position: fixed;
+    top: 54px;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+  }
+  .bw-explain-panel.open { transform: translateX(0); }
+  .bw-graph-page.panel-collapsed .bw-explain-panel { transform: translateX(100%); }
+}
 `;
 
 export function htmlShell(params: {
@@ -2809,6 +3006,8 @@ ${params.extraHead ?? ''}
   </a>
   <nav class="bw-topbar-nav">
     <a href="/">Main</a>
+    <a href="/explain">Explore</a>
+    <a href="/graph">Graph</a>
     <a href="/all">All</a>
     <a href="/special/recent-changes">Recent</a>
     <a href="/random">Random</a>

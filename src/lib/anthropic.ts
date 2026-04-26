@@ -58,3 +58,34 @@ export async function callLLM(params: LLMParams): Promise<string> {
     .map((b) => b.text)
     .join('\n');
 }
+
+export async function* callLLMStream(params: LLMParams): AsyncGenerator<string> {
+  const provider: Provider =
+    params.provider ?? (process.env.BRANDWIKI_PROVIDER as Provider) ?? 'claude-cli';
+
+  if (provider === 'claude-cli') {
+    const result = await callClaudeCLI({
+      system: params.system,
+      user: params.user,
+    });
+    yield result;
+    return;
+  }
+
+  const c = getClient();
+  const stream = c.messages.stream({
+    model: params.model,
+    max_tokens: params.maxTokens ?? 4096,
+    system: params.system,
+    messages: [{ role: 'user', content: params.user }],
+  });
+
+  for await (const event of stream) {
+    if (
+      event.type === 'content_block_delta' &&
+      event.delta.type === 'text_delta'
+    ) {
+      yield event.delta.text;
+    }
+  }
+}
