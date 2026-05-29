@@ -60,6 +60,12 @@ describe('captureFacts', () => {
     });
   });
 
+  it('uses a per-artifact createdAt when present, else the batch date', async () => {
+    const llm = vi.fn().mockResolvedValue('[{"subject":"x","body":"y"}]');
+    const facts = await captureFacts([artifact({ createdAt: '2025-12-01' })], ctx, llm);
+    expect(facts[0].createdAt).toBe('2025-12-01');
+  });
+
   it('attributes each fact to its own artifact across multiple inputs', async () => {
     const llm = vi
       .fn()

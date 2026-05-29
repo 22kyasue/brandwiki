@@ -8,6 +8,9 @@ export interface Artifact {
   content: string;
   /** Content hash of the artifact — becomes the fact's `sourceHash`. */
   sourceHash: string;
+  /** Optional per-artifact date (e.g. a doc's last-commit date); overrides
+   *  the batch `ctx.createdAt` when present. */
+  createdAt?: string;
 }
 
 export interface CaptureContext {
@@ -43,7 +46,7 @@ export async function captureFacts(artifacts: Artifact[], ctx: CaptureContext, l
         kind: proposed.kind,
         source: artifact.ref,
         sourceHash: artifact.sourceHash,
-        createdAt: ctx.createdAt,
+        createdAt: artifact.createdAt ?? ctx.createdAt,
       });
     }
   }

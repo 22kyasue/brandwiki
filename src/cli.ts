@@ -102,6 +102,7 @@ program
   .command('capture')
   .description('Mine a commit (message + changed decision docs) for facts → review queue')
   .option('-c, --commit <ref>', 'Commit to capture from (default HEAD)')
+  .option('--seed', 'Seed mode: mine existing artifacts (README/CLAUDE.md/docs) for first build-out')
   .option('--dry-run', 'List artifacts that would be mined; no LLM call')
   .action(async (opts) => { await captureCommand(opts); });
 
