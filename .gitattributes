@@ -1,0 +1,23 @@
+# Normalize line endings: store text as LF in the repo so Linux CI is stable
+# regardless of each contributor's core.autocrlf setting.
+*.ts   text eol=lf
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+
+# Windows launch scripts must keep CRLF.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Binary assets — never touch line endings.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
