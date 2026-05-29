@@ -39,6 +39,9 @@ export interface BrandwikiConfig {
   template: string;
   provider?: 'claude-cli' | 'api';
   categories: Array<{ id: string; title: string; description: string }>;
+  /** Days within which two differing facts on a subject trip the Conflict-Gate
+   *  instead of latest-by-date supersession. Defaults to 14. */
+  conflictWindowDays?: number;
   model: {
     compile: string;
     lint: string;

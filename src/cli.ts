@@ -12,6 +12,10 @@ import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
 import { mcpCommand } from './commands/mcp.js';
+import { renderCommand } from './commands/render.js';
+import { captureCommand } from './commands/capture.js';
+import { reviewCommand } from './commands/review.js';
+import { installHookCommand } from './commands/install-hook.js';
 
 const program = new Command();
 
@@ -87,6 +91,33 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('render')
+  .description('Render the Fact Ledger into wiki/ pages (replaces the destructive compile)')
+  .option('--dry-run', 'Show what would be rendered without calling the LLM')
+  .action(async (opts) => { await renderCommand(opts); });
+
+program
+  .command('capture')
+  .description('Mine a commit (message + changed decision docs) for facts → review queue')
+  .option('-c, --commit <ref>', 'Commit to capture from (default HEAD)')
+  .option('--dry-run', 'List artifacts that would be mined; no LLM call')
+  .action(async (opts) => { await captureCommand(opts); });
+
+program
+  .command('review')
+  .description('List, accept, or reject agent-proposed facts in the review queue')
+  .option('-a, --accept <id>', 'Accept a proposal into the ledger')
+  .option('-r, --reject <id>', 'Reject (discard) a proposal')
+  .option('--accept-all', 'Accept every pending proposal')
+  .action(async (opts) => { await reviewCommand(opts); });
+
+program
+  .command('install-hook')
+  .description('Install a git post-commit hook that runs capture on every commit')
+  .option('--render', 'Also re-render the wiki after capture')
+  .action(async (opts) => { await installHookCommand(opts); });
 
 program
   .command('mcp')
