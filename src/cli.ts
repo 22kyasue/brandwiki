@@ -16,6 +16,7 @@ import { renderCommand } from './commands/render.js';
 import { captureCommand } from './commands/capture.js';
 import { reviewCommand } from './commands/review.js';
 import { installHookCommand } from './commands/install-hook.js';
+import { digestCommand } from './commands/digest.js';
 
 const program = new Command();
 
@@ -91,6 +92,11 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('digest')
+  .description('Print the per-session Digest (dated brief) from the Fact Ledger')
+  .action(async () => { await digestCommand(); });
 
 program
   .command('render')
