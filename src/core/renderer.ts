@@ -14,6 +14,14 @@ export interface RenderArticle {
   content: string;
 }
 
+export interface RenderOptions {
+  /** Max facts per LLM call. Large ledgers are rendered in several bounded
+   *  calls so no single generation blows the model's time/length budget. */
+  maxFactsPerCall?: number;
+}
+
+const DEFAULT_MAX_FACTS_PER_CALL = 60;
+
 /**
  * The Renderer (ADR 0001): turns the resolved Fact Ledger into readable wiki
  * pages. One direction only — it is given facts and an LLM, and *cannot* reach
@@ -21,17 +29,47 @@ export interface RenderArticle {
  * destructive `compile` (which read raw/, invented articles, and overwrote
  * wiki/). The LLM here only *organizes and phrases* the supplied facts; it is
  * forbidden from inventing claims not present in them.
+ *
+ * Facts are rendered in bounded chunks; unresolved conflicts are surfaced once
+ * (with the first chunk). Article slugs colliding across chunks are
+ * disambiguated so no chunk's output silently overwrites another's.
  */
 export async function renderArticles(
   config: RenderConfig,
   facts: Fact[],
   conflicts: ConflictPair[],
   llm: LLMFn,
+  options: RenderOptions = {},
 ): Promise<RenderArticle[]> {
   if (facts.length === 0 && conflicts.length === 0) return [];
-  const { system, user } = buildRenderPrompt(config, facts, conflicts);
-  const response = await llm({ system, user });
-  return parseRenderResponse(response);
+  const max = options.maxFactsPerCall ?? DEFAULT_MAX_FACTS_PER_CALL;
+  const chunks = facts.length > 0 ? chunk(facts, max) : [[]];
+
+  const articles: RenderArticle[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < chunks.length; i++) {
+    // Conflicts go with the first chunk only, so they appear exactly once.
+    const { system, user } = buildRenderPrompt(config, chunks[i], i === 0 ? conflicts : []);
+    const response = await llm({ system, user });
+    for (const article of parseRenderResponse(response)) {
+      articles.push({ ...article, slug: uniqueSlug(article.category, article.slug, seen) });
+    }
+  }
+  return articles;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function uniqueSlug(category: string, slug: string, seen: Set<string>): string {
+  let candidate = slug;
+  let n = 2;
+  while (seen.has(`${category}/${candidate}`)) candidate = `${slug}-${n++}`;
+  seen.add(`${category}/${candidate}`);
+  return candidate;
 }
 
 export function buildRenderPrompt(

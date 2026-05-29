@@ -87,4 +87,21 @@ describe('renderArticles', () => {
     expect(llm).not.toHaveBeenCalled();
     expect(articles).toEqual([]);
   });
+
+  it('renders large fact sets in bounded chunks', async () => {
+    const llm = vi.fn().mockResolvedValue(SAMPLE_RESPONSE);
+    const many = Array.from({ length: 5 }, (_, i) => fact({ subject: `s${i}` }));
+    await renderArticles(config, many, [], llm, { maxFactsPerCall: 2 });
+    expect(llm).toHaveBeenCalledTimes(3); // ceil(5/2)
+  });
+
+  it('disambiguates slugs that collide across chunks (no silent overwrite)', async () => {
+    const llm = vi.fn().mockResolvedValue(SAMPLE_RESPONSE); // every chunk yields slug "pricing"
+    const many = Array.from({ length: 4 }, (_, i) => fact({ subject: `s${i}` }));
+    const articles = await renderArticles(config, many, [], llm, { maxFactsPerCall: 2 });
+    const slugs = articles.map((a) => a.slug);
+    expect(new Set(slugs).size).toBe(slugs.length); // all unique
+    expect(slugs).toContain('pricing');
+    expect(slugs).toContain('pricing-2');
+  });
 });
