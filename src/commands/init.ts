@@ -53,6 +53,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     language: options.language,
     template,
     provider: 'claude-cli',
+    conflictWindowDays: 14,
     categories: templateConfig.categories ?? [],
     model: {
       compile: 'claude-sonnet-4-6',
@@ -76,26 +77,25 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   const readmeContent = `# ${projectName} Brand Wiki
 
-Auto-generated living knowledge base. **Do not edit \`wiki/\` manually** — it is compiled from \`raw/\` by the \`brandwiki\` CLI.
+Context library backed by an **append-only Fact Ledger**. The truth lives in \`ledger.jsonl\`; \`wiki/\` pages are generated **Renders** — **never edit them**, and never treat them as authoritative. To fix a fact, append a corrected one; don't rewrite a page.
 
 ## Structure
-- \`raw/\` — raw source material (notes, meetings, decisions, references)
-- \`wiki/\` — compiled Markdown articles (LLM-maintained)
-- \`outputs/\` — query results, slides, reports
-- \`_index/\` — auto-generated indexes and backlinks
+- \`ledger.jsonl\` — append-only Fact Ledger (the source of truth)
+- \`review-queue.json\` — proposed facts awaiting human accept/reject
+- \`wiki/\` — generated Markdown Renders (disposable, regenerable)
 - \`config.json\` — project config
-- \`manifest.json\` — incremental compile tracking
 
 ## Usage
 \`\`\`bash
-brandwiki compile         # Update wiki/ from raw/
-brandwiki lint            # Detect contradictions
-brandwiki query "..."     # Ask the wiki
-brandwiki status          # Health check
+brandwiki capture            # Mine the latest commit + decision docs → review queue
+brandwiki review             # Accept/reject proposed facts (the human gate)
+brandwiki render             # Generate wiki/ pages from the ledger
+brandwiki install-hook       # Auto-capture on every commit
+brandwiki status             # Health check
 \`\`\`
 
 ## Language
-All articles are written in **${options.language === 'ja' ? 'Japanese (日本語)' : 'English'}**.
+All Renders are written in **${options.language === 'ja' ? 'Japanese (日本語)' : 'English'}**.
 `;
   writeFileSync(join(bwDir, 'README.md'), readmeContent, 'utf-8');
 
@@ -106,6 +106,7 @@ All articles are written in **${options.language === 'ja' ? 'Japanese (日本語
   console.log(pc.dim(`  ${config.categories.length} categories initialized`));
   console.log();
   console.log('Next steps:');
-  console.log('  1. Drop raw material into .brandwiki/raw/');
-  console.log('  2. Run `brandwiki compile` to generate wiki articles');
+  console.log('  1. Run `brandwiki capture` to mine the latest commit + docs into proposed facts');
+  console.log('  2. Run `brandwiki review` to accept them into the ledger');
+  console.log('  3. Run `brandwiki render` to generate wiki/ pages');
 }

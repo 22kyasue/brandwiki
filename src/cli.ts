@@ -34,9 +34,9 @@ program
 
 program
   .command('compile')
-  .description('Compile raw/ into wiki/ using LLM')
-  .option('-f, --force', 'Recompile all articles, ignoring manifest')
-  .option('--dry-run', 'Show what would be compiled without calling LLM')
+  .description('[DEPRECATED] Replaced by capture → review → render (Fact Ledger pipeline)')
+  .option('-f, --force', '(no-op)')
+  .option('--dry-run', '(no-op)')
   .action(compileCommand);
 
 program

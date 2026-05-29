@@ -10,6 +10,7 @@ import { resolve } from '../core/resolver.js';
 import { buildDigest } from '../core/digest.js';
 import { renderCommand } from './render.js';
 import type { Fact, FactKind } from '../core/fact.js';
+import { todayISO } from '../core/date.js';
 
 interface McpOptions {
   root?: string;
@@ -187,7 +188,7 @@ function toolProposeFact(config: BrandwikiConfig, bwDir: string, args: Record<st
     kind,
     source: 'agent:mcp',
     sourceHash: '',
-    createdAt: new Date().toISOString().slice(0, 10),
+    createdAt: todayISO(),
   });
   return `Proposed ${id} → review queue (quarantined). Not trusted until accepted via \`brandwiki review --accept ${id}\`.`;
 }

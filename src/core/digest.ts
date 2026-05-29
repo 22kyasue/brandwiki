@@ -1,6 +1,7 @@
 import type { Fact } from './fact.js';
 import { resolve } from './resolver.js';
 import { assess } from './freshness.js';
+import { toISODate } from './date.js';
 
 export interface DigestOptions {
   /** The project's full ledger facts (resolution happens here). */
@@ -35,7 +36,7 @@ export function buildDigest(project: string, options: DigestOptions): string {
   const lines: string[] = [
     STAMP,
     `# Digest — ${project}`,
-    `_Generated ${iso(now)}. Every fact below is dated; distrust anything stale._`,
+    `_Generated ${toISODate(now)}. Every fact below is dated; distrust anything stale._`,
   ];
 
   lines.push('', '## Decisions & current state');
@@ -71,6 +72,3 @@ function meta(fact: Fact, now: Date, staleIds: Set<string>): string {
   return `_(${fact.source} · ${fact.createdAt}, ${ageDays}d ago${stale})_`;
 }
 
-function iso(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}

@@ -6,6 +6,7 @@ import pc from 'picocolors';
 import { findProjectRoot, loadConfig, brandwikiDir } from '../lib/config.js';
 import { openLedger, openReviewQueue, projectKey, makeLLM } from '../lib/stores.js';
 import { captureFacts, type Artifact } from '../core/capture.js';
+import { todayISO } from '../core/date.js';
 
 interface CaptureOptions {
   /** Capture from this commit (default HEAD). */
@@ -30,7 +31,7 @@ export async function captureCommand(options: CaptureOptions): Promise<void> {
     console.log(pc.yellow('No artifacts to capture from this commit.'));
     return;
   }
-  const createdAt = git(root, ['show', '-s', '--format=%cs', commit]).trim() || new Date().toISOString().slice(0, 10);
+  const createdAt = git(root, ['show', '-s', '--format=%cs', commit]).trim() || todayISO();
   console.log(pc.cyan(`Capturing from ${artifacts.length} artifact(s) at ${commit} (${createdAt})`));
 
   if (options.dryRun) {
