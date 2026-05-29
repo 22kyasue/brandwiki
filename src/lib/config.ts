@@ -39,6 +39,9 @@ export interface BrandwikiConfig {
   template: string;
   provider?: 'claude-cli' | 'api';
   categories: Array<{ id: string; title: string; description: string }>;
+  /** Days within which two differing facts on a subject trip the Conflict-Gate
+   *  instead of latest-by-date supersession. Defaults to 14. */
+  conflictWindowDays?: number;
   model: {
     compile: string;
     lint: string;
@@ -61,6 +64,11 @@ export interface BrandwikiConfig {
 }
 
 export function findProjectRoot(startDir: string = process.cwd()): string {
+  if (process.env.BRANDWIKI_ROOT) {
+    const explicit = resolve(process.env.BRANDWIKI_ROOT);
+    if (existsSync(join(explicit, '.brandwiki', 'config.json'))) return explicit;
+    throw new Error(`BRANDWIKI_ROOT=${explicit} but no .brandwiki/config.json found there.`);
+  }
   let dir = resolve(startDir);
   while (dir !== resolve(dir, '..')) {
     if (existsSync(join(dir, '.brandwiki', 'config.json'))) return dir;

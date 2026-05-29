@@ -11,13 +11,19 @@ import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
+import { mcpCommand } from './commands/mcp.js';
+import { renderCommand } from './commands/render.js';
+import { captureCommand } from './commands/capture.js';
+import { reviewCommand } from './commands/review.js';
+import { installHookCommand } from './commands/install-hook.js';
+import { digestCommand } from './commands/digest.js';
 
 const program = new Command();
 
 program
   .name('brandwiki')
   .description('LLM-powered brand wiki compiler')
-  .version('0.1.0');
+  .version('0.2.0');
 
 program
   .command('init')
@@ -29,9 +35,9 @@ program
 
 program
   .command('compile')
-  .description('Compile raw/ into wiki/ using LLM')
-  .option('-f, --force', 'Recompile all articles, ignoring manifest')
-  .option('--dry-run', 'Show what would be compiled without calling LLM')
+  .description('[DEPRECATED] Replaced by capture → review → render (Fact Ledger pipeline)')
+  .option('-f, --force', '(no-op)')
+  .option('--dry-run', '(no-op)')
   .action(compileCommand);
 
 program
@@ -86,6 +92,45 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('digest')
+  .description('Print the per-session Digest (dated brief) from the Fact Ledger')
+  .action(async () => { await digestCommand(); });
+
+program
+  .command('render')
+  .description('Render the Fact Ledger into wiki/ pages (replaces the destructive compile)')
+  .option('--dry-run', 'Show what would be rendered without calling the LLM')
+  .action(async (opts) => { await renderCommand(opts); });
+
+program
+  .command('capture')
+  .description('Mine a commit (message + changed decision docs) for facts → review queue')
+  .option('-c, --commit <ref>', 'Commit to capture from (default HEAD)')
+  .option('--seed', 'Seed mode: mine existing artifacts (README/CLAUDE.md/docs) for first build-out')
+  .option('--dry-run', 'List artifacts that would be mined; no LLM call')
+  .action(async (opts) => { await captureCommand(opts); });
+
+program
+  .command('review')
+  .description('List, accept, or reject agent-proposed facts in the review queue')
+  .option('-a, --accept <id>', 'Accept a proposal into the ledger')
+  .option('-r, --reject <id>', 'Reject (discard) a proposal')
+  .option('--accept-all', 'Accept every pending proposal')
+  .action(async (opts) => { await reviewCommand(opts); });
+
+program
+  .command('install-hook')
+  .description('Install a git post-commit hook that runs capture on every commit')
+  .option('--render', 'Also re-render the wiki after capture')
+  .action(async (opts) => { await installHookCommand(opts); });
+
+program
+  .command('mcp')
+  .description('Run as an MCP server over stdio (for Claude Code / OpenClaw integration)')
+  .option('-r, --root <path>', 'Project root (directory containing .brandwiki/). Defaults to BRANDWIKI_ROOT env or cwd walk.')
+  .action(async (opts) => { await mcpCommand(opts); });
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);
