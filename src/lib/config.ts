@@ -61,6 +61,11 @@ export interface BrandwikiConfig {
 }
 
 export function findProjectRoot(startDir: string = process.cwd()): string {
+  if (process.env.BRANDWIKI_ROOT) {
+    const explicit = resolve(process.env.BRANDWIKI_ROOT);
+    if (existsSync(join(explicit, '.brandwiki', 'config.json'))) return explicit;
+    throw new Error(`BRANDWIKI_ROOT=${explicit} but no .brandwiki/config.json found there.`);
+  }
   let dir = resolve(startDir);
   while (dir !== resolve(dir, '..')) {
     if (existsSync(join(dir, '.brandwiki', 'config.json'))) return dir;

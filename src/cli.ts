@@ -11,13 +11,14 @@ import { serveCommand } from './commands/serve.js';
 import { ingestCommand } from './commands/ingest.js';
 import { watchCommand } from './commands/watch.js';
 import { researchCommand } from './commands/research.js';
+import { mcpCommand } from './commands/mcp.js';
 
 const program = new Command();
 
 program
   .name('brandwiki')
   .description('LLM-powered brand wiki compiler')
-  .version('0.1.0');
+  .version('0.2.0');
 
 program
   .command('init')
@@ -86,6 +87,12 @@ program
   .option('-f, --force', 'Overwrite today\'s report if it already exists')
   .option('-v, --verbose', 'Show skipped items')
   .action(researchCommand);
+
+program
+  .command('mcp')
+  .description('Run as an MCP server over stdio (for Claude Code / OpenClaw integration)')
+  .option('-r, --root <path>', 'Project root (directory containing .brandwiki/). Defaults to BRANDWIKI_ROOT env or cwd walk.')
+  .action(async (opts) => { await mcpCommand(opts); });
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(pc.red('Error:'), err.message);
