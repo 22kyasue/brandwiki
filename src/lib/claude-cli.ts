@@ -13,6 +13,37 @@ export async function callClaudeCLI(params: {
   bin?: string;
   timeoutMs?: number;
   cwd?: string;
+  /** Total attempts before giving up (default 3 = 1 try + 2 retries). */
+  retries?: number;
+}): Promise<string> {
+  const attempts = Math.max(1, params.retries ?? 3);
+  let lastErr: Error | undefined;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await callClaudeOnce(params);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (attempt < attempts) {
+        // Exponential backoff: 2s, 4s — rides out the transient `code 1`
+        // and spawn flakiness seen under fan-out / post-commit-hook load.
+        const backoffMs = 2000 * 2 ** (attempt - 1);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+  }
+
+  throw new Error(
+    `claude CLI failed after ${attempts} attempt(s): ${lastErr?.message ?? 'unknown error'}`,
+  );
+}
+
+function callClaudeOnce(params: {
+  system: string;
+  user: string;
+  bin?: string;
+  timeoutMs?: number;
+  cwd?: string;
 }): Promise<string> {
   const bin = params.bin ?? 'claude';
   const timeoutMs = params.timeoutMs ?? 10 * 60 * 1000;

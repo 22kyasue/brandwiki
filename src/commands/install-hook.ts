@@ -29,12 +29,15 @@ export async function installHookCommand(options: InstallHookOptions): Promise<v
     throw new Error(`A post-commit hook already exists at ${hookPath} and is not managed by brandwiki. Merge manually.`);
   }
 
-  const renderLine = options.render ? 'brandwiki render || true\n' : '';
+  // Capture is an LLM call (seconds–minutes), so run it DETACHED — a foreground
+  // hook would make every `git commit` block on the model. Output → capture.log.
+  const renderPart = options.render ? ' && brandwiki render' : '';
   const script = `#!/bin/sh
 ${MARKER}
 # Capture facts from this commit into the review queue (safe: proposals only).
-brandwiki capture || true
-${renderLine}`;
+# Detached so the commit returns immediately; logs to .brandwiki/capture.log.
+(brandwiki capture${renderPart} >.brandwiki/capture.log 2>&1 || true) &
+`;
 
   writeFileSync(hookPath, script, 'utf-8');
   try {
