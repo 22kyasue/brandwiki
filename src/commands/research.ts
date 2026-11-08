@@ -242,6 +242,7 @@ export async function researchCommand(options: ResearchOptions): Promise<void> {
 
   if (targets.length === 0) {
     console.log(pc.red(`No competitor matching "${options.competitor}".`));
+    process.exitCode = 1;
     return;
   }
 
@@ -345,5 +346,12 @@ export async function researchCommand(options: ResearchOptions): Promise<void> {
         pc.dim('\nRun `brandwiki compile` to fold these into wiki articles, or use --compile to do it now.')
       );
     }
+  }
+
+  // Any failure fails the run so scheduled jobs (e.g. the AirSync workflow) go red.
+  // Successful reports above are still written, notified and compiled first.
+  if (failed > 0) {
+    console.log(pc.red(`✗ ${failed} of ${targets.length} competitor${targets.length === 1 ? '' : 's'} failed`));
+    process.exitCode = 1;
   }
 }
